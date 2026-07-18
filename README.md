@@ -143,7 +143,7 @@ Aligned with [pi’s provider list](https://github.com/earendil-works/pi/blob/ma
 | `google-vertex` | `GOOGLE_CLOUD_API_KEY` (+ `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`) |
 | `radius` | `RADIUS_API_KEY` (optional `RADIUS_GATEWAY_URL`) |
 
-> **⚠️ ToS caveat:** Anthropic and OpenAI **subscription OAuth** reuse first-party client IDs and may violate those providers' terms of service. **API keys are the sanctioned path.** Google login and Copilot device flow are the more widely tolerated OAuth options.
+> **⚠️ ToS caveat:** Anthropic and OpenAI **subscription OAuth** reuse first-party client IDs and may violate those providers' terms of service. **API keys are the sanctioned path.** Copilot device flow is the more widely tolerated OAuth option. **Google OAuth** needs your own client credentials via env (`DEVCODE_GOOGLE_OAUTH_CLIENT_ID` / `DEVCODE_GOOGLE_OAUTH_CLIENT_SECRET`, or the `GOOGLE_OAUTH_*` aliases) — nothing is shipped in-repo for secret-scanning safety.
 
 Run `/provider` in the TUI for the live list and auth status.
 
