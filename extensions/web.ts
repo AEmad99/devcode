@@ -96,6 +96,8 @@ export default function (api: ExtensionAPI) {
     schema: Type.Object({
       url: Type.String({ description: "HTTP(S) URL to fetch" }),
     }),
+    readOnly: true,
+    parallelSafe: true,
     async execute(_id, params, signal) {
       try {
         const url = String(params.url ?? "");
@@ -116,6 +118,8 @@ export default function (api: ExtensionAPI) {
     schema: Type.Object({
       query: Type.String({ description: "Search query" }),
     }),
+    readOnly: true,
+    parallelSafe: true,
     async execute(_id, params, signal) {
       try {
         const query = String(params.query ?? "").trim();

@@ -114,7 +114,7 @@ describe("compactMessages", () => {
   test("summarizes history into a single continuation message", async () => {
     const provider = new SummaryProvider();
     const history: Message[] = [textMsg("user", "hi"), textMsg("assistant", "hello")];
-    const compacted = await compactMessages(provider, history, "fake", new AbortController().signal);
+    const compacted = await compactMessages(provider, history, new AbortController().signal);
     expect(compacted.length).toBe(1);
     expect(compacted[0].role).toBe("user");
     const block = compacted[0].content[0];

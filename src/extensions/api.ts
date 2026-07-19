@@ -9,6 +9,16 @@ export interface ExtensionToolDef {
   // (needed by the reload-self pattern). Core ToolDef.execute has 3 params;
   // this is an additive superset.
   execute(id: string, params: any, signal: AbortSignal, ctx?: ExtensionContext): Promise<ToolResult>;
+  /**
+   * Opt-in capability hints. Set `readOnly: true` to skip permission prompts
+   * and to make the tool available in explore-mode subagents. Set
+   * `parallelSafe: true` (implies readOnly) to also let the loop batch this
+   * tool with other parallel-safe calls in a single turn. Defaults to false
+   * for both — extension tools that mutate files or have side effects must
+   * not set either.
+   */
+  readOnly?: boolean;
+  parallelSafe?: boolean;
 }
 
 export type ExtensionEvent =

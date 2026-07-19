@@ -29,6 +29,13 @@ export interface ToolDef {
   description: string;
   schema: import("@sinclair/typebox").TObject; // JSON schema via TypeBox
   execute(id: string, input: any, signal: AbortSignal): Promise<ToolResult>;
+  /**
+   * Optional capability hints. When omitted, classification falls back to the
+   * built-in name sets in tools/index.ts. Extension tools that mutate files or
+   * have side effects must NOT set these (the safe default is false).
+   */
+  readOnly?: boolean;
+  parallelSafe?: boolean;
 }
 export type AgentEvent =
   | { type: "text_delta"; text: string }

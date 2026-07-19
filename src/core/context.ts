@@ -62,7 +62,6 @@ const COMPACT_PROMPT =
 export async function compactMessages(
   provider: Provider,
   messages: Message[],
-  model: string,
   signal: AbortSignal,
 ): Promise<Message[]> {
   let summary = "";
@@ -70,6 +69,5 @@ export async function compactMessages(
   for await (const ev of provider.stream({ system: "You are a terse summarizer.", messages: request, tools: [], maxTokens: 4096, signal })) {
     if (ev.type === "text_delta") summary += ev.text;
   }
-  void model; // model lives on the provider; kept in the signature for future providers
   return [{ role: "user", content: [{ type: "text", text: `${summary}\n\nContinue where you left off.` }] }];
 }

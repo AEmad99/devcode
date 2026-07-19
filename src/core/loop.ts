@@ -1,5 +1,6 @@
 import type { Provider } from "../providers/types.js";
 import type { Emitter } from "./events.js";
+import { isParallelSafeToolName } from "./tools/index.js";
 import { validateToolInput } from "./tools/index.js";
 import type { ContentBlock, Message, StopReason, StreamEvent, ToolDef, ToolResult, Usage } from "./types.js";
 
@@ -7,17 +8,26 @@ const DEFAULT_MAX_TURNS = 100;
 const MAX_TOKENS = 16384;
 const ZERO_USAGE: Usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 
-/** Tools safe to run concurrently (no filesystem mutations / side effects). */
-export const PARALLEL_SAFE_TOOLS = new Set([
-  "read",
-  "grep",
-  "glob",
-  "web_search",
-  "web_fetch",
-]);
+/**
+ * Parallel-safe predicate, accepting either a name or a tool def.
+ * - When given a name: looks up the built-in name set (single source of truth).
+ * - When given a ToolDef: also honors a per-def `parallelSafe: true` hint so
+ *   extension tools that opt in participate in parallel batching.
+ *
+ * Kept name-based for back-compat with project-instructions.test.ts.
+ */
+export function isParallelSafeTool(nameOrTool: string | ToolDef): boolean {
+  if (typeof nameOrTool === "string") return isParallelSafeToolName(nameOrTool);
+  if (nameOrTool.parallelSafe) return true;
+  return isParallelSafeToolName(nameOrTool.name);
+}
 
-export function isParallelSafeTool(name: string): boolean {
-  return PARALLEL_SAFE_TOOLS.has(name);
+/**
+ * Def-only predicate, used by batchToolUses where we already have the def.
+ */
+function isParallelSafeByDef(tool: ToolDef): boolean {
+  if (tool.parallelSafe) return true;
+  return isParallelSafeToolName(tool.name);
 }
 
 export interface LoopOptions {
@@ -108,7 +118,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<{ messages: Messa
     let steerMsg: Message | null = null;
 
     // Batch consecutive parallel-safe tools; mutate / unknown tools run alone.
-    const batches = parallelTools ? batchToolUses(toolUses) : toolUses.map((tu) => [tu]);
+    const batches = parallelTools ? batchToolUses(toolUses, tools) : toolUses.map((tu) => [tu]);
 
     for (const batch of batches) {
       if (aborted || steerMsg || loopError) {
@@ -191,12 +201,27 @@ export async function runAgentLoop(opts: LoopOptions): Promise<{ messages: Messa
   }
 }
 
-/** Group consecutive parallel-safe tool uses; others alone. */
-export function batchToolUses(toolUses: ToolUseBlock[]): ToolUseBlock[][] {
+/**
+ * Group consecutive parallel-safe tool uses; others alone.
+ *
+ * `tools` is the resolved ToolDef list (built-ins + extension tools) so the
+ * def-aware predicate can honor an extension tool's `parallelSafe: true` hint.
+ * When omitted (legacy callers / project-instructions.test.ts), falls back to
+ * the name-based predicate over the built-in set.
+ */
+export function batchToolUses(toolUses: ToolUseBlock[], tools?: ToolDef[]): ToolUseBlock[][] {
+  const isSafe = (name: string): boolean => {
+    if (tools) {
+      const def = tools.find((t) => t.name === name);
+      if (def && isParallelSafeByDef(def)) return true;
+      return false;
+    }
+    return isParallelSafeToolName(name);
+  };
   const batches: ToolUseBlock[][] = [];
   let current: ToolUseBlock[] = [];
   for (const tu of toolUses) {
-    if (isParallelSafeTool(tu.name)) {
+    if (isSafe(tu.name)) {
       current.push(tu);
     } else {
       if (current.length) {

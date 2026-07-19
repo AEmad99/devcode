@@ -119,15 +119,28 @@ export function loadAllSkills(cwd: string): SkillMeta[] {
   return skills;
 }
 
-/** Compact system-prompt section so the model knows which /skills exist. */
+/**
+ * Compact system-prompt section so the model knows which /skills exist.
+ *
+ * Progressive disclosure: when there are many skills, only the first N get
+ * inline (name + description). The rest are still discoverable via /skills,
+ * so the model doesn't bloat the prompt with every entry on every turn.
+ */
+const INDEX_CAP = 12;
+export const SKILLS_INDEX_CAP = INDEX_CAP;
+
 export function formatSkillsIndex(skills: SkillMeta[]): string {
   if (skills.length === 0) return "";
   const lines = [
     "# Available skills (user slash commands)",
     "The user can invoke these with /name. When relevant, suggest the matching skill.",
   ];
-  for (const s of skills) {
+  const shown = skills.slice(0, INDEX_CAP);
+  for (const s of shown) {
     lines.push(`- /${s.name} — ${s.description}`);
+  }
+  if (skills.length > INDEX_CAP) {
+    lines.push(`- … and ${skills.length - INDEX_CAP} more — /skills to list all`);
   }
   return lines.join("\n");
 }

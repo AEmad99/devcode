@@ -69,8 +69,30 @@ it to fix its own broken extension.
 - `execute(id, params, signal, ctx?)` — returns `{ content: string, is_error? }`.
 - Throws become `is_error` results automatically.
 - Extension tools shadow built-in tools with the same name.
-- Extension tools are not on the permission allow-list: the user is asked
-  before they run (like `bash`/`write`).
+- Extension tools are not on the permission allow-list by default: the user
+  is asked before they run (like `bash`/`write`).
+
+#### Capability hints — opt in to read-only / parallel-safe
+
+Pass these optional fields on the tool def to declare that the tool has no
+side effects / can run concurrently:
+
+- `readOnly: true` — skip permission prompts (auto-allowed) AND make the tool
+  available in explore-mode subagents.
+- `parallelSafe: true` — implied `readOnly: true`; also lets the loop batch
+  the tool with other `parallelSafe` calls in the same turn. Only declare
+  this when concurrent execution is genuinely safe — the default is `false`.
+
+```ts
+api.registerTool({
+  name: "ripgrep",
+  description: "Search files via rg",
+  schema: Type.Object({ pattern: Type.String() }),
+  readOnly: true,
+  parallelSafe: true,
+  async execute(_id, params, signal) { /* … */ },
+});
+```
 
 ### `registerCommand(name, { description, handler })`
 
@@ -83,11 +105,17 @@ line as `args`. `ctx.reload()` reloads all extensions.
   Return `{ block: true, reason }` to stop the call; the model sees
   `Blocked: <reason>` as an `is_error` tool result. A throwing handler blocks
   too (fail-safe).
+  **Timing**: synchronous and blocks the tool call by design — a slow
+  `tool_call` handler stalls the agent loop. Keep them fast (shell out async
+  if needed, but don't `await` heavy work in `tool_call`).
 - `"tool_result"` — runs after every execution. Return a `ToolResult` to
   replace the result (handlers chain). Throws are logged, result passes through.
 - `"turn_start"` / `"turn_end"` — around each agent run.
 - `"session_start"` — after extensions load. `"session_shutdown"` — on `/reload`
   before state is torn down.
+- `"permission_requested"` — fires in both TUI and `-p` modes whenever a
+  permission prompt would appear. Fire-and-forget; you cannot resolve the
+  prompt from here (the host's `ask` function owns the resolution).
 
 ### Context (`ctx`) available in handlers, commands, and as the optional 4th tool argument
 

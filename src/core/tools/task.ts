@@ -2,24 +2,25 @@ import { Type } from "@sinclair/typebox";
 import type { Provider } from "../../providers/types.js";
 import { Emitter } from "../events.js";
 import { runAgentLoop } from "../loop.js";
+import { isReadOnlyToolName } from "../tools/index.js";
 import type { AgentEvent, Message, ToolDef, Usage } from "../types.js";
 import { createTaskWorktree } from "../worktree.js";
 export type TaskMode = "explore" | "all";
 
-const EXPLORE_TOOLS = new Set([
-  "read",
-  "grep",
-  "glob",
-  "todo",
-  "remember",
-  "background_task",
-  "web_search",
-  "web_fetch",
-]);
+/**
+ * Explore-mode filter: built-in read-only names + extension tools that opted in
+ * via `readOnly: true` (or `parallelSafe: true`, which implies it). A tool def
+ * without the hint is treated as mutating unless its name is in the built-in
+ * set — that's the safe default.
+ */
+function isReadOnlyForExplore(tool: ToolDef): boolean {
+  if (tool.readOnly) return true;
+  return isReadOnlyToolName(tool.name);
+}
 
 function filterByMode(tools: ToolDef[], mode: TaskMode): ToolDef[] {
   if (mode === "all") return tools;
-  return tools.filter((t) => EXPLORE_TOOLS.has(t.name));
+  return tools.filter((t) => isReadOnlyForExplore(t));
 }
 
 export interface TaskToolDeps {

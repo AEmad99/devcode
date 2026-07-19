@@ -71,7 +71,10 @@ If a path is missing or wrong, call glob from cwd rather than guessing absolute 
     `# Self-improvement
 You have persistent memory across sessions via the \`remember\` tool. When you learn something durable — a user preference or correction, a project convention, a pitfall that cost time — record it immediately (scope: project for repo-specific facts, global for cross-project ones).
 - Keep entries short and factual; never store secrets or transient task state.
-- Memory is injected at session start; entries you record now apply from the next session.`,
+- Use kind to classify: preference, convention, pitfall, or fact. pitfalls are worth highlighting — they cost time before.
+- When the user corrects you or you notice an earlier learning is now wrong, use action=update to revise it (or action=forget to drop it). Don't pile stale entries on top of wrong ones.
+- After a correction, call \`remember\` with scope=project before continuing — don't wait until the session ends.
+- Memory is injected at session start; entries you record now apply from the next session. Use /memory to review what's stored.`,
   ];
 
   if (env.gitSnapshot) {

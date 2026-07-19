@@ -51,17 +51,49 @@ export function defaultTools(sessionId = "default", cwd = process.cwd()): ToolDe
   ].map(withSpill);
 }
 
-/** Read-only tool subset for explore-mode subagents. */
+/**
+ * Single source of truth for built-in tool capability classification.
+ *
+ * - `READ_ONLY_TOOL_NAMES`: tools with no filesystem mutations or side effects.
+ *   Auto-allowed by the permission engine and available in explore-mode subagents.
+ *   Drift between the old four scattered sets was a latent bug (reload_extensions
+ *   was missing from two of them); this is now the one definition.
+ *
+ * - `PARALLEL_SAFE_TOOL_NAMES`: tools that may run concurrently with each other
+ *   in a single turn. Subset of read-only (stateful read-only tools like todo
+ *   and remember are excluded to avoid interleaving session-state mutations).
+ *
+ * Extension tools may opt in to either classification by setting `readOnly`
+ * / `parallelSafe` on their `ExtensionToolDef`; the runtime merges those into
+ * the predicates handed to the loop and permission engine.
+ */
 export const READ_ONLY_TOOL_NAMES = new Set([
   "read",
   "grep",
   "glob",
   "todo",
   "remember",
+  "reload_extensions",
   "background_task",
   "web_search",
   "web_fetch",
 ]);
+
+export const PARALLEL_SAFE_TOOL_NAMES = new Set([
+  "read",
+  "grep",
+  "glob",
+  "web_search",
+  "web_fetch",
+]);
+
+export function isReadOnlyToolName(name: string): boolean {
+  return READ_ONLY_TOOL_NAMES.has(name);
+}
+
+export function isParallelSafeToolName(name: string): boolean {
+  return PARALLEL_SAFE_TOOL_NAMES.has(name);
+}
 
 export function filterToolsByMode(tools: ToolDef[], mode: "explore" | "all"): ToolDef[] {
   if (mode === "all") return tools;

@@ -1,5 +1,13 @@
-// Markdown slash commands / skills.
-// Sources (project wins on name clash):
+// Markdown slash commands / skills — registers every discovered skill as a
+// /<name> command. Parsing, discovery, and the system-prompt index live in
+// core/skills.ts (single source of truth); this extension just wires each
+// skill to a slash command and provides /skills to list them.
+//
+// Also registers /memory — a first-class surface for inspecting and clearing
+// the agent's persistent learnings (global + project). The actual writes go
+// through the `remember` tool; this command is read-only / wipe-only.
+//
+// Sources (project wins on name clash), all discovered by core/skills.ts:
 //   ~/.devcode/commands/*.md
 //   ~/.devcode/skills/*/SKILL.md
 //   <cwd>/.devcode/commands/*.md
@@ -12,127 +20,38 @@
 //   allowed-tools: read,grep,bash
 //   ---
 // Body supports $ARGUMENTS substitution.
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
-import { homedir } from "node:os";
+import { readFileSync, writeFileSync } from "node:fs";
+import { expandSkillBody, loadAllSkills, loadSkill } from "../src/core/skills.js";
+import { globalMemoryPath, projectMemoryPath } from "../src/core/memory.js";
 import type { ExtensionAPI } from "devcode";
 
-interface SkillMeta {
-  name: string;
-  description: string;
-  path: string;
-  body: string;
-}
-
-function home(): string {
-  return process.env.DEVCODE_HOME ?? join(homedir(), ".devcode");
-}
-
-const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
-
-function parseFrontmatter(raw: string): { meta: Record<string, string>; body: string } {
-  const m = FRONTMATTER_RE.exec(raw);
-  if (!m) return { meta: {}, body: raw };
-  const meta: Record<string, string> = {};
-  for (const line of m[1].split(/\r?\n/)) {
-    const colon = line.indexOf(":");
-    if (colon <= 0) continue;
-    const key = line.slice(0, colon).trim().toLowerCase();
-    let val = line.slice(colon + 1).trim();
-    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
-      val = val.slice(1, -1);
-    }
-    if (key) meta[key] = val;
-  }
-  return { meta, body: m[2] };
-}
-
-function scanDir(dir: string): { name: string; path: string }[] {
-  let names: string[];
+function readFileSafe(path: string): string {
   try {
-    names = readdirSync(dir);
+    return readFileSync(path, "utf8");
   } catch {
-    return [];
+    return "";
   }
-  const out: { name: string; path: string }[] = [];
-  for (const n of names) {
-    const full = join(dir, n);
-    let st;
-    try {
-      st = statSync(full);
-    } catch {
-      continue;
-    }
-    if (st.isFile() && n.endsWith(".md")) {
-      const name = n.replace(/\.md$/i, "").toLowerCase();
-      if (/^[a-z0-9][a-z0-9_-]*$/.test(name)) out.push({ name, path: full });
-    } else if (st.isDirectory()) {
-      for (const idx of ["SKILL.md", "skill.md"]) {
-        const skillPath = join(full, idx);
-        if (existsSync(skillPath)) {
-          const name = n.toLowerCase();
-          if (/^[a-z0-9][a-z0-9_-]*$/.test(name)) out.push({ name, path: skillPath });
-          break;
-        }
-      }
-    }
-  }
-  return out;
-}
-
-function discover(cwd: string): { name: string; path: string }[] {
-  const found = new Map<string, string>();
-  for (const e of scanDir(join(home(), "commands"))) found.set(e.name, e.path);
-  for (const e of scanDir(join(home(), "skills"))) found.set(e.name, e.path);
-  for (const e of scanDir(join(cwd, ".devcode", "commands"))) found.set(e.name, e.path);
-  for (const e of scanDir(join(cwd, ".devcode", "skills"))) found.set(e.name, e.path);
-  return [...found.entries()].map(([name, path]) => ({ name, path }));
-}
-
-function loadSkill(path: string, fallbackName: string): SkillMeta | null {
-  let raw: string;
-  try {
-    raw = readFileSync(path, "utf8");
-  } catch {
-    return null;
-  }
-  const { meta, body } = parseFrontmatter(raw);
-  const name = (meta.name ?? fallbackName).toLowerCase().replace(/[^a-z0-9_-]/g, "");
-  if (!name) return null;
-  const description =
-    meta.description?.trim() ||
-    body
-      .trim()
-      .split(/\r?\n/)
-      .find((l) => l.trim().length > 0)
-      ?.replace(/^#+\s*/, "")
-      .slice(0, 120) ||
-    `Custom command from ${path.replace(/\\/g, "/")}`;
-  return { name, description, path, body: body.trimStart() };
-}
-
-function expandBody(body: string, args: string): string {
-  if (body.includes("$ARGUMENTS")) return body.replaceAll("$ARGUMENTS", args);
-  if (args.trim()) return `${body.trimEnd()}\n\n${args}`;
-  return body;
 }
 
 export default function (api: ExtensionAPI) {
   const cwd = process.cwd();
-  const skills: SkillMeta[] = [];
-  for (const f of discover(cwd)) {
-    const s = loadSkill(f.path, f.name);
-    if (s) skills.push(s);
-  }
+
+  const reloadSkills = () => {
+    // Re-read from disk so /reload picks up new skill files without a full
+    // process restart. loadAllSkills is cheap (a few readdirSync calls).
+    return loadAllSkills(cwd);
+  };
+
+  const skills = reloadSkills();
 
   for (const skill of skills) {
     api.registerCommand(skill.name, {
       description: skill.description,
       handler: async (args, ctx) => {
-        let body = skill.body;
+        // Re-read the file in case it was edited since discovery.
         const fresh = loadSkill(skill.path, skill.name);
-        if (fresh) body = fresh.body;
-        ctx.sendUserMessage(expandBody(body, args), { deliverAs: "followUp" });
+        const body = fresh?.body ?? skill.body;
+        ctx.sendUserMessage(expandSkillBody(body, args), { deliverAs: "followUp" });
       },
     });
   }
@@ -140,11 +59,66 @@ export default function (api: ExtensionAPI) {
   api.registerCommand("skills", {
     description: "List available markdown skills/commands",
     handler: (_args, ctx) => {
-      if (skills.length === 0) {
+      const list = reloadSkills();
+      if (list.length === 0) {
         ctx.ui.notify("No skills in ~/.devcode/commands|skills or .devcode/commands|skills", "info");
         return;
       }
-      ctx.ui.notify(`Skills (${skills.length}):\n${skills.map((s) => `/${s.name} — ${s.description}`).join("\n")}`, "info");
+      ctx.ui.notify(
+        `Skills (${list.length}):\n${list.map((s) => `/${s.name} — ${s.description}`).join("\n")}`,
+        "info",
+      );
     },
   });
+
+  api.registerCommand("memory", {
+    description: "Show the agent's persistent memory (/memory clear [global|project])",
+    handler: (args, ctx) => {
+      const a = args.trim().toLowerCase();
+      const global = readFileSafe(globalMemoryPath()).trim();
+      const project = readFileSafe(projectMemoryPath(cwd)).trim();
+
+      if (a === "clear" || a.startsWith("clear")) {
+        const which = a.split(/\s+/)[1] ?? "all";
+        let cleared: string[] = [];
+        if (which === "global" || which === "all") {
+          if (global) {
+            writeFileSync(globalMemoryPath(), "", "utf8");
+            cleared.push("global");
+          }
+        }
+        if (which === "project" || which === "all") {
+          if (project) {
+            writeFileSync(projectMemoryPath(cwd), "", "utf8");
+            cleared.push("project");
+          }
+        }
+        ctx.ui.notify(
+          cleared.length
+            ? `Cleared memory: ${cleared.join(", ")}`
+            : "Nothing to clear (memory is empty)",
+          "info",
+        );
+        return;
+      }
+
+      const lines: string[] = ["# Memory"];
+      lines.push(
+        global
+          ? `## Global\n${global}`
+          : "## Global\n(empty — ~/.devcode/memory.md)",
+      );
+      lines.push(
+        project
+          ? `## This project\n${project}`
+          : `## This project\n(empty — .devcode/memory.md)`,
+      );
+      lines.push("");
+      lines.push("Usage: /memory clear [global|project|all]");
+      ctx.ui.notify(lines.join("\n"), "info");
+    },
+  });
+
+  // If the user edits a skill file mid-session, /reload refreshes commands by
+  // re-running this factory.
 }

@@ -1,4 +1,5 @@
 import { Type } from "@sinclair/typebox";
+import { clearReadOnlyNames, registerReadOnlyNames } from "../core/permissions.js";
 import { loadSettings, saveSettings } from "../core/settings.js";
 import type { ToolDef, ToolResult } from "../core/types.js";
 import type {
@@ -244,6 +245,11 @@ export class ExtensionRuntime {
       name: def.name,
       description: def.description,
       schema: def.schema,
+      // Pass capability hints through so the permission engine can auto-allow
+      // a read-only extension tool and the loop can batch a parallelSafe one.
+      // parallelSafe implies readOnly (a mutating parallel tool would be unsafe).
+      readOnly: def.parallelSafe ? true : def.readOnly,
+      parallelSafe: def.parallelSafe,
       execute: async (id, input, signal): Promise<ToolResult> => {
         try {
           return await def.execute(id, input, signal, this.makeContext(path, gen));
@@ -270,6 +276,20 @@ export class ExtensionRuntime {
     const ext = this.tools();
     const extNames = new Set(ext.map((t) => t.name));
     return [...ext, ...defaults.filter((t) => !extNames.has(t.name))];
+  }
+
+  /**
+   * Seed the permission engine's read-only registry with every tool (built-in
+   * or extension) that declared `readOnly: true` on its def. Must be called
+   * after `mergedTools` whenever the tool set changes (initial load, /reload,
+   * provider/model switch). Idempotent: clears + repopulates so stale names
+   * from a reloaded extension don't linger.
+   */
+  syncReadOnlyNames(tools: ToolDef[]): void {
+    clearReadOnlyNames();
+    for (const t of tools) {
+      if (t.readOnly) registerReadOnlyNames([t.name]);
+    }
   }
 
   // Wrap every tool with tool_call / tool_result middleware.

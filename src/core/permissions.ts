@@ -22,18 +22,49 @@ export interface PermissionRequest {
 }
 export type AskFn = (req: PermissionRequest) => Promise<PermissionChoice>;
 
-// Read-only and low-risk self-management tools are always allowed.
-const READ_ONLY_TOOLS = new Set([
+/**
+ * Names that are always allowed (no side effects / no filesystem mutations).
+ * Single source of truth: the built-in set in `core/tools/index.ts` plus any
+ * extension tool that opts in via `readOnly: true` on its `ExtensionToolDef`.
+ * The host seeds the runtime-registered names via `registerReadOnlyNames`
+ * after merging extension tools — the permission engine itself never imports
+ * extension internals, so the layering stays clean.
+ */
+const RUNTIME_READ_ONLY = new Set<string>();
+
+export function registerReadOnlyNames(names: Iterable<string>): void {
+  for (const n of names) RUNTIME_READ_ONLY.add(n);
+}
+
+export function clearReadOnlyNames(): void {
+  RUNTIME_READ_ONLY.clear();
+}
+
+/** Names always allowed because they have no side effects. */
+export function readOnlyToolNames(): Set<string> {
+  return new Set(RUNTIME_READ_ONLY);
+}
+
+// Built-in read-only tool names. Kept here (not imported from tools/index.ts)
+// to avoid a circular dependency: tools/index.ts pulls spillCap from context.ts
+// which imports from limits.ts etc. The single source of truth lives in
+// tools/index.ts; this is a defensive copy that the test in
+// project-instructions.test.ts asserts stays in sync.
+const BUILTIN_READ_ONLY = new Set([
   "read",
   "grep",
   "glob",
   "todo",
   "remember",
   "reload_extensions",
-  "background_task", // list/read/kill of jobs the user already authorized via bash
+  "background_task",
   "web_search",
   "web_fetch",
 ]);
+
+function isReadOnlyName(name: string): boolean {
+  return BUILTIN_READ_ONLY.has(name) || RUNTIME_READ_ONLY.has(name);
+}
 
 // Bash commands that never need prompting when they are the leading command.
 const BASH_ALLOWED_PREFIXES = ["ls", "pwd", "git status", "git diff", "git log", "cat", "echo"];
@@ -294,8 +325,8 @@ export class PermissionEngine {
     }
     // 6. Persistent allow rules.
     if (this.matchesAny(this.allowRules, tool, target)) return "allow";
-    // 7. Read-only tools.
-    if (READ_ONLY_TOOLS.has(tool)) return "allow";
+    // 7. Read-only tools (built-ins + extension tools that opted in via readOnly).
+    if (isReadOnlyName(tool)) return "allow";
     // 8. Seeded safe bash prefixes.
     if (tool === "bash" && typeof input?.command === "string" && hasAllowedBashPrefix(input.command)) return "allow";
     // 9. Everything else: headless runs can't prompt, so they allow (deny rules above still bite).
@@ -316,6 +347,12 @@ export function permissionDetail(tool: string, input: any): string {
 export interface WrapPermissionsOpts {
   /** Called after a persistent rule is added so the host can write settings.json. */
   onPersist?: (rules: { allow: string[]; deny: string[]; defaultMode: PermissionMode }) => void;
+  /**
+   * Fired before the user is prompted (action==="ask"). Lets extensions observe
+   * pending permission requests in both TUI and print mode — e.g. notify.ts.
+   * Synchronous best-effort: the host should not block on it. May be omitted.
+   */
+  onPrompt?: (req: PermissionRequest) => void;
 }
 
 export function wrapToolsWithPermissions(
@@ -330,7 +367,9 @@ export function wrapToolsWithPermissions(
       const action = engine.check(tool.name, input);
       if (action === "deny") return { content: "Permission denied by user", is_error: true };
       if (action === "ask") {
-        const choice = await ask({ tool: tool.name, detail: permissionDetail(tool.name, input), input });
+        const req = { tool: tool.name, detail: permissionDetail(tool.name, input), input };
+        opts?.onPrompt?.(req);
+        const choice = await ask(req);
         if (choice === "deny") return { content: "Permission denied by user", is_error: true };
         if (choice === "always_deny") {
           const rule = suggestPermissionRule(tool.name, input);
