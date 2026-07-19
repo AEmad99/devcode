@@ -313,6 +313,21 @@ describe("ModelPicker search", () => {
   });
 });
 
+describe("StreamingText tail cap", () => {
+  test("long streams only paint a tail so the dynamic frame stays short", async () => {
+    const { StreamingText } = await import("../src/tui/components/StreamingText.js");
+    const body = Array.from({ length: 40 }, (_, i) => `line-${i + 1}`).join("\n");
+    const { lastFrame, unmount } = render(<StreamingText text={body} theme={theme} maxLines={6} />);
+    await tick(40);
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("line-40");
+    expect(frame).toContain("line-35");
+    expect(frame).not.toContain("line-1");
+    expect(frame).toMatch(/34 earlier line/);
+    unmount();
+  });
+});
+
 describe("MessageList listForDisplay", () => {
   const mk = (n: number): Entry[] =>
     Array.from({ length: n }, (_, i) => ({ id: i + 1, kind: "info" as const, text: `e${i + 1}` }));

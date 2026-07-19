@@ -115,7 +115,11 @@ export function listForDisplay(
 
 /**
  * Committed history via <Static> so stream ticks don't repaint the transcript.
+ * When followTail is true, Static appends into the terminal scrollback permanently.
  * When jumpFocusId is set, that user turn is re-rendered live (highlighted).
+ *
+ * Keep Static as a shallow child of the app root (not inside a height=termRows
+ * flex viewport) — Ink on Windows full-clears any frame that fills the viewport.
  */
 export const MessageList = memo(function MessageList({
   entries,
@@ -139,33 +143,44 @@ export const MessageList = memo(function MessageList({
   const followTail = scrollOffset === 0 && jumpFocusId == null;
   const { display, hiddenEarlier } = listForDisplay(committed, { followTail, scrollOffset, windowSize, jumpFocusId });
 
+  // followTail: Static owns the transcript (scrollback). Pending tools stay in
+  // the dynamic frame so their progress can update until they complete and
+  // move into Static.
+  if (followTail) {
+    return (
+      <>
+        <Static items={display}>
+          {(entry) => (
+            <Box key={entry.id} flexDirection="column" width={width}>
+              <EntryView entry={entry} theme={theme} />
+            </Box>
+          )}
+        </Static>
+        {pending.length > 0 ? (
+          <Box flexDirection="column" width={width}>
+            {pending.map((entry) => (
+              <EntryView key={entry.id} entry={entry} theme={theme} />
+            ))}
+          </Box>
+        ) : null}
+      </>
+    );
+  }
+
   return (
     <Box flexDirection="column" width={width}>
-      {!followTail && jumpFocusId == null && hiddenEarlier > 0 ? (
+      {jumpFocusId == null && hiddenEarlier > 0 ? (
         <Text color={theme.accentDim}>↑ {hiddenEarlier} earlier · PageUp · [ / ] jump queries</Text>
       ) : null}
 
-      {followTail ? (
-        <Static items={display}>
-          {(entry) => (
-            <EntryView
-              key={entry.id}
-              entry={entry}
-              theme={theme}
-              focused={jumpFocusId != null && entry.id === jumpFocusId}
-            />
-          )}
-        </Static>
-      ) : (
-        display.map((entry) => (
-          <EntryView
-            key={entry.id}
-            entry={entry}
-            theme={theme}
-            focused={jumpFocusId != null && entry.id === jumpFocusId}
-          />
-        ))
-      )}
+      {display.map((entry) => (
+        <EntryView
+          key={entry.id}
+          entry={entry}
+          theme={theme}
+          focused={jumpFocusId != null && entry.id === jumpFocusId}
+        />
+      ))}
 
       {pending.map((entry) => (
         <EntryView key={entry.id} entry={entry} theme={theme} />

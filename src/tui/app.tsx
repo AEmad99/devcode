@@ -984,74 +984,76 @@ export function App({
       />
     );
 
-  // ── OpenCode-style welcome: logo + input centered in the terminal ──
+  // ── Welcome: soft-centered logo + input (no fixed terminal height) ──
+  // Ink on Windows clears the entire terminal for any frame whose height >=
+  // viewport rows. Never pin the root to termRows or history vanishes on every
+  // keystroke / stream tick. Soft vertical padding keeps total height under
+  // the viewport so scrollback stays intact (Grok Build / Claude Code style).
   if (showBanner && !login && !modelPicker && !providerPickerOpen && !resumePicker && !permissionsOpen) {
+    // Header(~7) + input(~3) + meta(~3) + tip(~2) ≈ 15 rows of content.
+    const welcomePad = Math.max(0, Math.min(8, Math.floor((termRows - 16) / 2)));
     return (
-      <Box flexDirection="column" width={termCols} height={termRows}>
-        <Box
-          flexDirection="column"
-          flexGrow={1}
-          alignItems="center"
-          justifyContent="center"
-          width={termCols}
-        >
-          <Header theme={theme} />
-          <Box width={inputWidth} flexDirection="column" alignItems="stretch">
-            {composer}
-          </Box>
-          <Box marginTop={1} flexDirection="column" alignItems="center">
-            <Text>
-              <Text color={theme.accent} bold>
-                {providerId === "fake" ? "demo" : providerId}
-              </Text>
-              <Text color={theme.accentDim}>{"  ·  "}</Text>
-              <Text color={theme.highlight}>{modelName}</Text>
-              {thinkLabel && !thinkLabel.endsWith(":off") ? (
-                <>
-                  <Text color={theme.accentDim}>{"  ·  "}</Text>
-                  <Text color={theme.thinking}>{thinkLabel}</Text>
-                </>
-              ) : null}
+      <Box flexDirection="column" width={termCols} alignItems="center">
+        {welcomePad > 0 ? <Box height={welcomePad} /> : null}
+        <Header theme={theme} />
+        <Box width={inputWidth} flexDirection="column" alignItems="stretch">
+          {composer}
+        </Box>
+        <Box marginTop={1} flexDirection="column" alignItems="center">
+          <Text>
+            <Text color={theme.accent} bold>
+              {providerId === "fake" ? "demo" : providerId}
             </Text>
-            <Box marginTop={1}>
-              <Text color={theme.accentDim}>
-                tip{"  "}
-                <Text color={theme.text}>type a message and press Enter · /model · /login · /help</Text>
-              </Text>
-            </Box>
+            <Text color={theme.accentDim}>{"  ·  "}</Text>
+            <Text color={theme.highlight}>{modelName}</Text>
+            {thinkLabel && !thinkLabel.endsWith(":off") ? (
+              <>
+                <Text color={theme.accentDim}>{"  ·  "}</Text>
+                <Text color={theme.thinking}>{thinkLabel}</Text>
+              </>
+            ) : null}
+          </Text>
+          <Box marginTop={1}>
+            <Text color={theme.accentDim}>
+              tip{"  "}
+              <Text color={theme.text}>type a message and press Enter · /model · /login · /help</Text>
+            </Text>
           </Box>
         </Box>
       </Box>
     );
   }
 
-  // ── Active chat layout (full terminal; reflows on resize) ──
+  // ── Active chat: document flow + <Static> transcript (not a fullscreen viewport) ──
+  // Committed messages go through MessageList → Ink <Static> and remain in the
+  // terminal scrollback. Only the live region (stream / tools / input / status)
+  // is rewritten each frame — same pattern as Grok Build and other agent TUIs.
   return (
-    <Box flexDirection="column" width={termCols} height={termRows}>
-      <Box flexDirection="column" flexGrow={1} width={termCols} minHeight={0}>
-        <MessageList
-          entries={state.entries}
-          theme={theme}
-          scrollOffset={jumpIdx >= 0 ? 0 : state.scrollOffset}
-          windowSize={messageWindow}
-          jumpFocusId={jumpFocusId}
-          width={termCols}
-        />
-        {state.streamingThinking || (state.running && !state.streamingText && !anyToolRunning) ? (
-          <ThinkingStream text={state.streamingThinking} theme={theme} active={state.running} />
-        ) : null}
-        {state.streamingText ? <StreamingText text={state.streamingText} theme={theme} /> : null}
-        <ScrollToEnd
-          theme={theme}
-          visible={showJump || jumpIdx >= 0}
-          unread={state.scrollOffset}
-          onJump={() => {
-            setJumpIdx(-1);
-            dispatch({ type: "scroll_to_end" });
-          }}
-        />
-      </Box>
-      <Box flexDirection="column" width={termCols} flexShrink={0}>
+    <Box flexDirection="column" width={termCols}>
+      <MessageList
+        entries={state.entries}
+        theme={theme}
+        scrollOffset={jumpIdx >= 0 ? 0 : state.scrollOffset}
+        windowSize={messageWindow}
+        jumpFocusId={jumpFocusId}
+        width={termCols}
+      />
+      {state.streamingThinking || (state.running && !state.streamingText && !anyToolRunning) ? (
+        <ThinkingStream text={state.streamingThinking} theme={theme} active={state.running} />
+      ) : null}
+      {state.streamingText ? (
+        <StreamingText text={state.streamingText} theme={theme} maxLines={Math.max(8, termRows - 8)} />
+      ) : null}
+      <ScrollToEnd
+        theme={theme}
+        visible={showJump || jumpIdx >= 0}
+        unread={state.scrollOffset}
+        onJump={() => {
+          setJumpIdx(-1);
+          dispatch({ type: "scroll_to_end" });
+        }}
+      />
+      <Box flexDirection="column" width={termCols}>
         {composer}
         {jumpIdx >= 0 ? (
           <Text>
