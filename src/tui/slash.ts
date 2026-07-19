@@ -17,6 +17,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "resume", description: "Pick a previous session to resume" },
   { name: "name", description: "Name this session (/name <label>)" },
   { name: "export", description: "Export session to markdown (/export [path])" },
+  { name: "memory", description: "Show persistent memory (/memory clear [global|project|all])" },
   { name: "model", description: "Open model picker (or /model <id>)" },
   { name: "provider", description: "Open provider picker (or /provider <id>)" },
   { name: "thinking", description: "Show/set thinking level (off|low|medium|high|max)" },

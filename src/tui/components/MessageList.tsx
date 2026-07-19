@@ -15,48 +15,59 @@ const EntryView = memo(function EntryView({
   focused?: boolean;
 }) {
   switch (entry.kind) {
-    case "user":
-      // Strong visual block so you can always find "what I asked"
+    case "user": {
+      // Strong visual block so you can always find "what I asked".
+      // Phase bar on top edge + bordered box distinguishes "user turn" from
+      // any system / assistant output even when scrolling fast.
       return (
-        <Box
-          flexDirection="column"
-          marginBottom={1}
-          borderStyle="round"
-          borderColor={focused ? theme.highlight : theme.user}
-          paddingX={1}
-        >
-          <Text color={theme.user} bold>
-            {focused ? "▶ you  (current jump)" : "❯ you"}
+        <Box flexDirection="column" marginBottom={1}>
+          <Text color={focused ? theme.highlight : theme.user} bold>
+            {"─ you ─"}
           </Text>
-          <Text color={theme.highlight}>{entry.text}</Text>
+          <Box
+            flexDirection="column"
+            borderStyle="round"
+            borderColor={focused ? theme.highlight : theme.user}
+            paddingX={1}
+          >
+            <Text color={theme.user} bold>
+              {focused ? "▶ current jump" : "❯ you"}
+            </Text>
+            <Text color={theme.highlight}>{entry.text}</Text>
+          </Box>
         </Box>
       );
-    case "assistant":
+    }
+    case "assistant": {
       return (
-        <Box flexDirection="column" marginBottom={1} marginLeft={1}>
+        <Box flexDirection="column" marginBottom={1}>
           <Text color={theme.accent} bold>
-            ● DevCode
+            {"─ DevCode ─"}
           </Text>
           <Box marginLeft={1}>
             <Markdown theme={theme}>{entry.text}</Markdown>
           </Box>
         </Box>
       );
-    case "thinking":
+    }
+    case "thinking": {
+      // Thinking phase: a sustained box at left with a header, so a long
+      // reasoning trace reads as "the agent was thinking" rather than a stream
+      // of cyan text bleeding into the next phase.
+      const lines = entry.text.split("\n").slice(0, 10);
       return (
-        <Box flexDirection="column" marginLeft={2} marginBottom={1}>
-          <Text color={theme.thinking}>thought</Text>
-          {entry.text
-            .split("\n")
-            .slice(0, 10)
-            .map((line, i) => (
-              <Text key={i} color={theme.thinking}>
-                {line || " "}
-              </Text>
-            ))}
+        <Box flexDirection="column" marginBottom={1} marginLeft={2}>
+          <Text color={theme.thinking}>{"· thinking …"}</Text>
+          {lines.map((line, i) => (
+            <Text key={i} color={theme.thinking}>
+              {"  "}
+              {line || " "}
+            </Text>
+          ))}
         </Box>
       );
-    case "tool":
+    }
+    case "tool": {
       return (
         <Box marginBottom={1} marginLeft={1}>
           <ToolBlock
@@ -69,20 +80,34 @@ const EntryView = memo(function EntryView({
           />
         </Box>
       );
-    case "info":
+    }
+    case "info": {
+      // System / informational lines: boxed so they're never confused with
+      // assistant prose. Subtle border + accent-dim text.
       return (
-        <Text color={theme.accentDim}>
-          {"· "}
-          {entry.text}
-        </Text>
+        <Box flexDirection="column" marginBottom={1}>
+          <Text color={theme.accentDim}>{"─ info ─"}</Text>
+          <Box marginLeft={1} flexDirection="column" borderStyle="round" borderColor={theme.accentDim} paddingX={1}>
+            <Text color={theme.text}>{entry.text}</Text>
+          </Box>
+        </Box>
       );
-    case "error":
+    }
+    case "error": {
+      // Errors always visible: thin error-colored border + bold text.
       return (
-        <Text color={theme.error} bold>
-          {"x "}
-          {entry.text}
-        </Text>
+        <Box flexDirection="column" marginBottom={1}>
+          <Text color={theme.error} bold>
+            {"─ error ─"}
+          </Text>
+          <Box marginLeft={1} flexDirection="column" borderStyle="round" borderColor={theme.error} paddingX={1}>
+            <Text color={theme.error} bold>
+              ✗ {entry.text}
+            </Text>
+          </Box>
+        </Box>
       );
+    }
   }
 });
 

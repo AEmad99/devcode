@@ -432,9 +432,11 @@ export const InputBox = memo(function InputBox({
   }
   const col = remaining;
 
-  const placeholder =
-    placeholderOverride ??
-    (running ? "Queue a follow-up  (Enter to queue)" : 'Ask anything…  "Fix broken tests"');
+  const placeholder = placeholderOverride ?? (running ? "Queue a follow-up  (Enter to queue)" : null);
+  // Empty placeholder: just show the cursor. The fixed welcome hint used to live
+  // here ("Ask anything…  Fix broken tests") and was always the same sentence
+  // on every launch — removing it lets each user use whatever framing suits
+  // their workflow without DevCode putting words in the input.
 
   return (
     <Box flexDirection="column" width={width}>
@@ -473,13 +475,14 @@ export const InputBox = memo(function InputBox({
         width={width}
       >
         {buf.value.length === 0 ? (
-          <Text>
-            <Text inverse>{" "}</Text>
-            <Text color={t.accentDim}>
-              {" "}
-              {placeholder}
+          placeholder ? (
+            <Text>
+              <Text inverse>{" "}</Text>
+              <Text color={t.accentDim}>{" "}{placeholder}</Text>
             </Text>
-          </Text>
+          ) : (
+            <Text inverse>{" "}</Text>
+          )
         ) : (
           lines.map((line, i) => (
             <Box key={i}>{renderLine(line, t, i === row ? col : null)}</Box>

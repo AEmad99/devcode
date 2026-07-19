@@ -6,6 +6,21 @@ import type { Usage } from "../../core/types.js";
 import type { Theme } from "../theme.js";
 
 const fmt = (n: number): string => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
+const DOT = "  ·  ";
+
+/**
+ * Render one colored segment of the status bar. Passing the whole status bar
+ * as a single <Text> with manual escapes fights Ink's per-segment styling;
+ * emitting one <Text> per segment keeps the background fill continuous while
+ * letting ink apply per-segment foreground colors.
+ */
+function seg(value: string, color: string): React.ReactNode {
+  return (
+    <Text key={value} color={color}>
+      {value}
+    </Text>
+  );
+}
 
 export const StatusLine = memo(function StatusLine({
   theme,
@@ -50,25 +65,60 @@ export const StatusLine = memo(function StatusLine({
     shortCwd = `…${shortCwd.slice(-24)}`;
   }
 
-  const parts: string[] = [];
-  if (pid) parts.push(pid);
-  parts.push(model);
-  parts.push(shortCwd);
-  parts.push(`ctx ${ctx}`);
-  parts.push(`↑${fmt(usage.input)} ↓${fmt(usage.output)} $${cost.toFixed(3)}`);
-  if (thinkingLabel && !thinkingLabel.endsWith(":off")) parts.push(thinkingLabel);
-  if (queued > 0) parts.push(`q:${queued}`);
-  if (bgRunning && bgRunning > 0) parts.push(`bg:${bgRunning}`);
-  if (running) parts.push("esc interrupt");
+  // Build a flat list of (text, color) so the visual order is obvious and a
+  // truncation pass can keep segments intact rather than slicing mid-token.
+  type Col = { text: string; color: string };
+  const cols: Col[] = [];
+  if (pid) cols.push({ text: pid, color: theme.statusFg ?? "black" }); // bg = statusBg
+  cols.push({ text: model, color: theme.statusFg ?? "black" });
+  cols.push({ text: shortCwd, color: theme.statusFg ?? "black" });
+  // ctx meter: color shifts from base → warn → error as it fills up.
+  const ctxColor = ctx.endsWith("%")
+    ? Number(ctx.slice(0, -1)) >= 90
+      ? theme.error
+      : Number(ctx.slice(0, -1)) >= 70
+        ? theme.warn
+        : theme.statusFg ?? "black"
+    : theme.statusFg ?? "black";
+  cols.push({ text: `ctx ${ctx}`, color: ctxColor });
+  cols.push({ text: `↑${fmt(usage.input)} ↓${fmt(usage.output)}`, color: theme.statusFg ?? "black" });
+  cols.push({ text: `$${cost.toFixed(3)}`, color: theme.statusFg ?? "black" });
+  if (thinkingLabel && !thinkingLabel.endsWith(":off")) {
+    cols.push({ text: thinkingLabel, color: theme.statusFg ?? "black" });
+  }
+  if (queued > 0) cols.push({ text: `q:${queued}`, color: theme.warn });
+  if (bgRunning && bgRunning > 0) cols.push({ text: `bg:${bgRunning}`, color: theme.warn });
+  if (running) cols.push({ text: "esc interrupt", color: theme.error });
 
-  let line = `  ${parts.join("  ·  ")}  `;
-  if (width && width > 4 && line.length > width) {
-    line = `${line.slice(0, Math.max(0, width - 1))}…`;
+  // Reassemble, then truncate to width if needed. We slice from the tail so
+  // the most time-sensitive flags (esc, bg) survive a narrow terminal.
+  const sepColor = theme.statusFg ?? "black";
+  const flat: Col[] = [];
+  cols.forEach((c, i) => {
+    if (i > 0) flat.push({ text: DOT, color: sepColor });
+    flat.push(c);
+  });
+  // Estimate total visible width — each segment is the length of its text.
+  let totalLen = flat.reduce((n, c) => n + c.text.length, 0);
+  if (width && width > 4 && totalLen + 4 > width) {
+    // Drop from the head (provider → cwd) until it fits, but keep at least
+    // ctx meter + usage + flags.
+    while (flat.length > 6 && totalLen + 4 > width) {
+      const dropped = flat.shift();
+      if (dropped) totalLen -= dropped.text.length;
+    }
+    flat.unshift({ text: "… ", color: sepColor });
   }
 
+  const padded = [{ text: "  ", color: theme.statusFg ?? "black" }, ...flat, { text: "  ", color: theme.statusFg ?? "black" }];
+
   return (
-    <Text backgroundColor={theme.statusBg} color={theme.statusFg ?? "black"} bold wrap="truncate">
-      {line}
+    <Text backgroundColor={theme.statusBg} bold wrap="truncate">
+      {padded.map((c, i) => (
+        <Text key={`${i}:${c.text}`} color={c.color}>
+          {c.text}
+        </Text>
+      ))}
     </Text>
   );
 });

@@ -9,7 +9,7 @@ import { LoginFlow } from "../src/tui/components/LoginFlow.js";
 import { ModelPicker } from "../src/tui/components/ModelPicker.js";
 import { PermissionPrompt } from "../src/tui/components/PermissionPrompt.js";
 import { ScrollToEnd } from "../src/tui/components/ScrollToEnd.js";
-import { listForDisplay } from "../src/tui/components/MessageList.js";
+import { listForDisplay, MessageList } from "../src/tui/components/MessageList.js";
 import { shortPath, ToolBlock } from "../src/tui/components/ToolBlock.js";
 import { initialState, reducer, type Entry, type State } from "../src/tui/store.js";
 import { THEMES } from "../src/tui/theme.js";
@@ -313,7 +313,42 @@ describe("ModelPicker search", () => {
   });
 });
 
-describe("StreamingText tail cap", () => {
+describe("StreamingText vs committed Markdown parity", () => {
+  // The whole point of this refactor: the streamed view and the committed view
+  // must produce the same visible characters for the same string. If they
+  // diverge, the user sees a "preview → final correction" jump at turn_end.
+  test("identical input renders identical characters (modulo trailing stream cursor)", async () => {
+    const { StreamingText } = await import("../src/tui/components/StreamingText.js");
+    const { Markdown } = await import("../src/tui/markdown.js");
+    const sample = "## Heading\n\n**bold**, *italic*, `code`.\n\n- a\n- b\n";
+    const a = render(<StreamingText text={sample} theme={theme} />);
+    const b = render(<Markdown theme={theme}>{sample}</Markdown>);
+    await tick(40);
+    // Strip the streaming cursor and trailing whitespace (the streaming view
+    // appends `▍` on its own line; the committed view packs compactly).
+    const strip = (s: string): string => s.replace(/▍/g, "").replace(/\s+$/g, "").replace(/\n+$/g, "");
+    const fa = strip(a.lastFrame() ?? "");
+    const fb = strip(b.lastFrame() ?? "");
+    a.unmount();
+    b.unmount();
+    expect(fa).toBe(fb);
+  });
+
+  test("streamed text never carries raw triple-backticks even when a code fence is mid-open", async () => {
+    const { StreamingText } = await import("../src/tui/components/StreamingText.js");
+    // Mid-stream partial code fence: opening ```ts with content, no closing yet.
+    const partial = "```ts\nconst x = 1;\n";
+    const { lastFrame, unmount } = render(<StreamingText text={partial} theme={theme} />);
+    await tick(20);
+    const frame = lastFrame() ?? "";
+    expect(frame).not.toMatch(/```/);
+    expect(frame).toContain("ts");
+    expect(frame).toContain("const x");
+    unmount();
+  });
+});
+
+describe("StreamingText progressive markdown", () => {
   test("long streams only paint a tail so the dynamic frame stays short", async () => {
     const { StreamingText } = await import("../src/tui/components/StreamingText.js");
     const body = Array.from({ length: 40 }, (_, i) => `line-${i + 1}`).join("\n");
@@ -324,6 +359,75 @@ describe("StreamingText tail cap", () => {
     expect(frame).toContain("line-35");
     expect(frame).not.toContain("line-1");
     expect(frame).toMatch(/34 earlier line/);
+    unmount();
+  });
+
+  test("renders markdown progressively so bold/code/fences appear mid-stream (no raw fence markers)", async () => {
+    const { StreamingText } = await import("../src/tui/components/StreamingText.js");
+    // Mid-stream partial: opening fence + language + body, no closing fence yet.
+    // The renderer must treat this as a code block, NOT show raw `\`\`\`ts` text.
+    const partial = "```ts\nconst greet = (name: string) => `hi ${name}`;\n";
+    const { lastFrame, unmount } = render(<StreamingText text={partial} theme={theme} />);
+    await tick(40);
+    const frame = lastFrame() ?? "";
+    // The fenced code language label appears (the parser interprets a partial
+    // fence as the start of a code block).
+    expect(frame).toContain("ts");
+    expect(frame).toContain("const greet");
+    // Inline code rendering applies (template-literal styled).
+    expect(frame).not.toMatch(/```/);
+    unmount();
+  });
+
+  test("partial bold span renders as plain text until the closing ** lands (no false-bold mid-stream)", async () => {
+    const { StreamingText } = await import("../src/tui/components/StreamingText.js");
+    {
+      const partial = "this is **bo"; // opening but no closing
+      const { lastFrame, unmount } = render(<StreamingText text={partial} theme={theme} />);
+      await tick(20);
+      const frame = lastFrame() ?? "";
+      // The partial markup is shown verbatim — there is no premature bold
+      // application, no markdown "snap" once it closes.
+      expect(frame).toContain("**bo");
+      unmount();
+    }
+    {
+      const complete = "this is **bold**";
+      const { lastFrame, unmount } = render(<StreamingText text={complete} theme={theme} />);
+      await tick(20);
+      const frame = lastFrame() ?? "";
+      // Once the span closes, the raw markers disappear and the word is bold.
+      expect(frame).toContain("bold");
+      expect(frame).not.toMatch(/\*\*/);
+      unmount();
+    }
+  });
+
+  test("inline code applies formatting as soon as the closing backtick lands", async () => {
+    const { StreamingText } = await import("../src/tui/components/StreamingText.js");
+    const partial = "use `pnpm i` to install";
+    const { lastFrame, unmount } = render(<StreamingText text={partial} theme={theme} />);
+    await tick(20);
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("pnpm i");
+    // Backtick wrappers are stripped once the inline code is complete.
+    expect(frame).not.toMatch(/`/);
+    unmount();
+  });
+
+  test("bullet items render as bullets mid-stream", async () => {
+    const { StreamingText } = await import("../src/tui/components/StreamingText.js");
+    const { lastFrame, unmount } = render(
+      <StreamingText
+        text={"- first\n- second"}
+        theme={theme}
+      />,
+    );
+    await tick(20);
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("•");
+    expect(frame).toContain("first");
+    expect(frame).toContain("second");
     unmount();
   });
 });
@@ -490,6 +594,157 @@ describe("ToolBlock read/write presentation", () => {
     expect(frame).toContain("const a = 2");
     expect(frame).toMatch(/replaced 1/i);
     expect(frame).not.toContain("@@ -");
+    unmount();
+  });
+});
+
+describe("ToolBlock phase icons", () => {
+  test("read/write/edit/bash each get a distinct phase glyph and verb", async () => {
+    const cases: { name: string; glyph: string; verb: string }[] = [
+      { name: "read", glyph: "⤓", verb: "read" },
+      { name: "write", glyph: "↳", verb: "write" },
+      { name: "edit", glyph: "✎", verb: "edit" },
+      { name: "bash", glyph: "$", verb: "bash" },
+      { name: "grep", glyph: "⌕", verb: "grep" },
+      { name: "glob", glyph: "*", verb: "glob" },
+    ];
+    for (const c of cases) {
+      const { lastFrame, unmount } = render(
+        <ToolBlock
+          name={c.name}
+          input={{ path: "x.ts", pattern: "pat", command: "ls" }}
+          status="done"
+          result={{ content: "ok" }}
+          theme={theme}
+        />,
+      );
+      await tick(20);
+      const frame = lastFrame() ?? "";
+      expect(frame).toContain(c.glyph);
+      expect(frame).toContain(c.verb);
+      unmount();
+    }
+  });
+
+  test("running tool shows ●, done shows ✓, failed shows ✗", async () => {
+    const renders = (status: "running" | "done", result?: { content: string; is_error?: boolean }) => {
+      return render(
+        <ToolBlock
+          name="bash"
+          input={{ command: "ls" }}
+          status={status}
+          result={result}
+          theme={theme}
+        />,
+      );
+    };
+    {
+      const { lastFrame, unmount } = renders("running");
+      await tick(20);
+      expect(lastFrame() ?? "").toContain("●");
+      expect(lastFrame() ?? "").not.toContain("✓");
+      unmount();
+    }
+    {
+      const { lastFrame, unmount } = renders("done", { content: "ok" });
+      await tick(20);
+      expect(lastFrame() ?? "").toContain("✓");
+      unmount();
+    }
+    {
+      const { lastFrame, unmount } = renders("done", { content: "no", is_error: true });
+      await tick(20);
+      expect(lastFrame() ?? "").toContain("✗");
+      unmount();
+    }
+  });
+
+  test("bash output gets a labeled `· output` header to distinguish it from grep/glob dumps", async () => {
+    const { lastFrame, unmount } = render(
+      <ToolBlock
+        name="bash"
+        input={{ command: "ls" }}
+        status="done"
+        result={{ content: "file.txt\nother.txt" }}
+        theme={theme}
+      />,
+    );
+    await tick(20);
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("bash");
+    expect(frame).toContain("$");
+    expect(frame).toContain("· output");
+    expect(frame).toContain("file.txt");
+    unmount();
+  });
+
+  test("subagent task gets a ⊟ task glyph", async () => {
+    const { lastFrame, unmount } = render(
+      <ToolBlock
+        name="task:explore/code-review"
+        input={{}}
+        status="done"
+        result={{ content: "ok" }}
+        theme={theme}
+      />,
+    );
+    await tick(20);
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("⊟");
+    expect(frame).toContain("task");
+    unmount();
+  });
+});
+
+describe("EntryView phase separators", () => {
+  // MessageList routes the committed transcript through <Static> when in
+  // followTail mode (scrollOffset === 0), which ink-testing-library doesn't
+  // flush into lastFrame. Use the jumpFocus pin path with a large windowSize
+  // so all entries render directly into the dynamic frame.
+  test("user / assistant / thinking / info / error entries each get a phase header line", async () => {
+    const entries = [
+      { id: 1, kind: "user" as const, text: "hi" },
+      { id: 2, kind: "assistant" as const, text: "hello" },
+      { id: 3, kind: "thinking" as const, text: "considering" },
+      { id: 4, kind: "info" as const, text: "Reload scheduled" },
+      { id: 5, kind: "error" as const, text: "boom" },
+    ];
+    // jumpFocusId pins the focused user entry into the visible window; with
+    // windowSize big enough, the whole list renders into lastFrame.
+    const { lastFrame, unmount } = render(
+      <MessageList entries={entries} theme={theme} scrollOffset={0} windowSize={50} jumpFocusId={1} />,
+    );
+    await tick(40);
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("─ you ─");
+    expect(frame).toContain("─ DevCode ─");
+    expect(frame).toContain("thinking");
+    expect(frame).toContain("─ info ─");
+    expect(frame).toContain("─ error ─");
+    expect(frame).toContain("boom");
+    unmount();
+  });
+});
+
+describe("InputBox default placeholder removed", () => {
+  test("no automatic fixed sentence appears when the input is empty", async () => {
+    const { lastFrame, unmount } = render(
+      <InputBox running={false} onSubmit={() => {}} theme={theme} />,
+    );
+    await tick(20);
+    const frame = lastFrame() ?? "";
+    expect(frame).not.toContain("Ask anything");
+    expect(frame).not.toContain("Fix broken tests");
+    unmount();
+  });
+
+  test("running mode keeps the contextual queue hint (not the same sentence every launch)", async () => {
+    const { lastFrame, unmount } = render(
+      <InputBox running={true} onSubmit={() => {}} theme={theme} />,
+    );
+    await tick(20);
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("Queue a follow-up");
     unmount();
   });
 });

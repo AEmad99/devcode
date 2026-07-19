@@ -179,11 +179,49 @@ export function SearchablePicker<T>({
           const active = abs === index;
           const current = isCurrent?.(item) ?? false;
           const detail = detailOf?.(item);
+          // Active row: reverse-video via inverse (renders reliably across
+          // themes including "mono"). Current row gets a `[● current]` pill
+          // so the active model / provider is always findable at a glance.
+          const labelText = labelOf(item);
+          if (active) {
+            return (
+              <Text key={keyOf(item)} inverse>
+                {"  ❯ "}
+                {current ? (
+                  <Text color={theme.success} inverse>
+                    {"[● current] "}
+                  </Text>
+                ) : null}
+                {labelText}
+                {detail ? (
+                  <Text dimColor>
+                    {"  "}
+                    {detail}
+                  </Text>
+                ) : null}
+              </Text>
+            );
+          }
+          if (current) {
+            return (
+              <Text key={keyOf(item)} color={theme.success} bold>
+                {"    [● current] "}
+                <Text color={theme.text} bold={false}>
+                  {labelText}
+                </Text>
+                {detail ? (
+                  <Text color={theme.muted} bold={false}>
+                    {"  "}
+                    {detail}
+                  </Text>
+                ) : null}
+              </Text>
+            );
+          }
           return (
-            <Text key={keyOf(item)} color={active ? theme.accent : theme.text} bold={active || current}>
-              {active ? "❯ " : "  "}
-              {current ? "● " : "  "}
-              {labelOf(item)}
+            <Text key={keyOf(item)} color={theme.text}>
+              {"    "}
+              {labelText}
               {detail ? (
                 <Text color={theme.muted} bold={false}>
                   {"  "}

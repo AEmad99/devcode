@@ -156,6 +156,7 @@ function WriteSummary({ content, path, theme }: { content: string; path: string;
   );
 }
 
+
 function EditSummary({ result, theme }: { result?: ToolResult; theme: Theme }) {
   if (!result?.content || result.is_error) return null;
   // "Edited path: replaced N occurrence(s)"
@@ -179,7 +180,66 @@ const FALLBACK_THEME = {
   highlight: "white",
   accentDim: "cyan",
   warn: "yellow",
+  accent: "cyan",
 } as Theme;
+
+/**
+ * Phase-icon table — every tool/op gets a glyph + verb label so the transcript
+ * reads as a sequence of distinguishable phases rather than a wall of text.
+ *
+ *   read          ⤓   read   (passive — file into the agent)
+ *   write         ↳   write  (active  — file out of the agent)
+ *   edit          ✎   edit   (active  — in-place mutation)
+ *   bash          $   bash   (active  — shell execution)
+ *   grep          ⌕   grep   (passive — search)
+ *   glob          *   glob   (passive — file listing)
+ *   todo          ☑   todo   (passive — checklist view)
+ *   remember      ◐   memory (passive — persistent state)
+ *   reload        ↻   reload (active  — runtime mutation)
+ *   background    ⏳   bg     (passive — async task)
+ *   web_search    ◌   search (passive — web query)
+ *   web_fetch     ⤓   fetch  (passive — web read)
+ *   task:*        ⊟   task   (passive — subagent)
+ *   mcp_*         ⌬   mcp    (active  — external server call)
+ *   default       ▸   generic
+ *
+ * Status overlays: ● in warn (running), ✓ in success (ok), ✗ in error (failed).
+ */
+const PHASE_ICON: Record<string, { glyph: string; verb: string; phase: "read" | "write" | "operate" | "think" }> = {
+  read: { glyph: "⤓", verb: "read", phase: "read" },
+  write: { glyph: "↳", verb: "write", phase: "write" },
+  edit: { glyph: "✎", verb: "edit", phase: "write" },
+  bash: { glyph: "$", verb: "bash", phase: "operate" },
+  grep: { glyph: "⌕", verb: "grep", phase: "read" },
+  glob: { glyph: "*", verb: "glob", phase: "read" },
+  todo: { glyph: "☑", verb: "todo", phase: "read" },
+  remember: { glyph: "◐", verb: "memory", phase: "read" },
+  reload_extensions: { glyph: "↻", verb: "reload", phase: "operate" },
+  background_task: { glyph: "⏳", verb: "bg", phase: "read" },
+  web_search: { glyph: "◌", verb: "search", phase: "read" },
+  web_fetch: { glyph: "⤓", verb: "fetch", phase: "read" },
+};
+
+function phaseFor(name: string): { glyph: string; verb: string; phase: "read" | "write" | "operate" | "think" } {
+  // task labels come through as "task:<label>/<tool>"; treat the whole run as a read-phase subagent.
+  if (name.startsWith("task:") || name === "task") return { glyph: "⊟", verb: "task", phase: "read" };
+  if (name.startsWith("mcp_")) return { glyph: "⌬", verb: "mcp", phase: "operate" };
+  return PHASE_ICON[name] ?? { glyph: "▸", verb: name, phase: "operate" };
+}
+
+function phaseAccent(theme: Theme, phase: "read" | "write" | "operate" | "think"): string {
+  // Three distinct hues so reads, writes, and operations never blur together.
+  switch (phase) {
+    case "read":
+      return theme.accent; // cyan / theme accent
+    case "write":
+      return theme.warn; // amber / theme warning hue
+    case "operate":
+      return theme.highlight; // white
+    case "think":
+      return theme.thinking;
+  }
+}
 
 export function ToolBlock({
   name,
@@ -202,7 +262,12 @@ export function ToolBlock({
   const done = status === "done";
   const failed = done && !!result?.is_error;
 
-  const icon = !done ? (
+  const phase = phaseFor(name);
+  const phaseColor = phaseAccent(t, phase.phase);
+
+  // Status glyph on the left rail: ● running / ✓ ok / ✗ failed.
+  // Failed bumps the phase color toward error so the failure mode reads at a glance.
+  const statusGlyph = !done ? (
     <Text color={t.warn}>●</Text>
   ) : failed ? (
     <Text color={t.error}>✗</Text>
@@ -210,17 +275,15 @@ export function ToolBlock({
     <Text color={t.success}>✓</Text>
   );
 
-  // Friendly verb labels
-  const label =
-    name === "read"
-      ? "read"
-      : name === "write"
-        ? "write"
-        : name === "edit"
-          ? "edit"
-          : name === "bash"
-            ? "bash"
-            : name;
+  // Phase glyph next to the verb label (kept short — wide glyphs break line wrap on narrow terminals).
+  const phaseGlyph = <Text color={phaseColor}>{phase.glyph}</Text>;
+
+  // Verb label colored by phase so write-/edit-/bash phases don't all read as "highlight white".
+  const verb = (
+    <Text bold color={phaseColor}>
+      {phase.verb}
+    </Text>
+  );
 
   const isRead = name === "read";
   const isWrite = name === "write";
@@ -229,20 +292,16 @@ export function ToolBlock({
 
   return (
     <Box flexDirection="column">
+      {/* Header line: [status] [phase-glyph] [verb]   [preview…] */}
       <Text>
-        {icon}{" "}
-        <Text bold color={t.highlight}>
-          {label}
-        </Text>
+        {statusGlyph} {phaseGlyph} {verb}
         {preview ? (
           <>
             <Text color={t.muted}>{"  "}</Text>
             <Text color={failed ? t.error : t.accentDim ?? t.muted}>{preview}</Text>
           </>
         ) : null}
-        {!done ? (
-          <Text color={t.warn}> …</Text>
-        ) : null}
+        {!done ? <Text color={t.warn}> …</Text> : null}
       </Text>
 
       {/* Write: clean create preview (no @@ headers) + compact summary */}
@@ -269,9 +328,18 @@ export function ToolBlock({
       ) : null}
       {isRead && done && result?.is_error ? <GenericResultView result={result} theme={t} /> : null}
 
-      {/* Everything else (bash, grep, glob, todo, …) */}
-      {!isRead && !isWrite && !isEdit && done && result ? (
-        <GenericResultView result={result} theme={t} maxLines={name === "bash" ? 20 : 12} />
+      {/* Bash output: distinct from grep/glob dump — a thin "output" header so
+          the transcript reads as "command $ result" rather than a bare wall. */}
+      {name === "bash" && done && result && !failed ? (
+        <Box marginLeft={2} flexDirection="column">
+          <Text color={t.muted}>{"  · output"}</Text>
+          <GenericResultView result={result} theme={t} maxLines={20} />
+        </Box>
+      ) : null}
+
+      {/* Everything else (grep, glob, todo, …) */}
+      {!isRead && !isWrite && !isEdit && name !== "bash" && done && result ? (
+        <GenericResultView result={result} theme={t} maxLines={12} />
       ) : null}
     </Box>
   );
