@@ -21,6 +21,7 @@ import {
 } from "./core/session.js";
 import { loadSettings, rememberChoice } from "./core/settings.js";
 import { formatSkillsIndex, loadAllSkills } from "./core/skills.js";
+import { enterFullScreen, installScreenCleanupOnce } from "./tui/screen-mode.js";
 import { expandMentions } from "./core/mentions.js";
 import { defaultTools } from "./core/tools/index.js";
 import { taskTool } from "./core/tools/task.js";
@@ -33,6 +34,7 @@ import {
 } from "./core/permissions.js";
 import type { AgentEvent, Message, StreamEvent, Usage } from "./core/types.js";
 import { docsDir, globalExtensionsDir, projectExtensionsDir } from "./extensions/loader.js";
+import { ExtensionRuntime } from "./extensions/runtime.js";
 import { makeProvider, preferredProviderId, refreshStoredOAuth } from "./providers/registry.js";
 import type { Provider } from "./providers/types.js";
 
@@ -250,6 +252,17 @@ async function launchTui(args: CliArgs): Promise<void> {
   if (sessionWriter.id) {
     console.error(dim(`session ${sessionWriter.id}${args.name ? ` (${args.name})` : ""}`));
   }
+
+  // Take over the whole terminal: alt-screen + hide cursor + disable soft-wrap,
+  // then hand off to Ink. Without this, the TUI paints into whatever rows are
+  // left after the prompt (or after `less`, or after a multi-line header),
+  // and the user sees a TUI narrower than the actual viewport.
+  enterFullScreen();
+  // Restore the original screen on every plausible exit path: normal exit,
+  // Ctrl+C twice, SIGTERM, /exit, uncaught errors. setupScreenCleanupOnce is
+  // idempotent against multiple terminations, but we only call it once.
+  installScreenCleanupOnce();
+
   const { render } = await import("ink");
   const { App } = await import("./tui/app.js");
   render(
@@ -343,35 +356,100 @@ async function main(): Promise<void> {
   };
   const permissionEngine = new PermissionEngine(permRules, { headless: true });
   if (args.permissionMode) permissionEngine.setMode(args.permissionMode);
+
+  // Extension runtime shared with TUI behavior: loads bundled + global + project
+  // extensions, runs tool_call/tool_result middleware, fires lifecycle events
+  // (turn_start / turn_end / permission_requested). This closes the gap where
+  // notify.ts, mcp.ts, and custom extension tools were silently inert in -p.
+  //
+  // Security: project extensions require a TUI-side trust prompt that print
+  // mode cannot show. If the project was never trusted (settings.json),
+  // confirmTrust returns false so untrusted code never runs unattended.
+  const extensionRuntime = new ExtensionRuntime({
+    cwd,
+    getModel: () => modelId ?? "print",
+    confirm: async () => true,
+    confirmTrust: async () => {
+      // One-shot trust refusals are the right default for headless -p; users
+      // who run a project under the TUI once will be persisted and respected
+      // on subsequent -p invocations.
+      console.error(
+        dim(
+          `[security] Project extensions in ${cwd} are not trusted. Run the TUI there once and accept, or set trust via settings.json.`,
+        ),
+      );
+      return false;
+    },
+    notify: (text, level) => {
+      if (outputFormat === "text") console.error(level === "error" ? red(`[ext] ${text}`) : dim(`[ext] ${text}`));
+    },
+    exec: async (command) => {
+      // Reuse the bash tool machinery so env (Git Bash on Windows) matches.
+      const { bashTool } = await import("./core/tools/bash.js");
+      const r = await bashTool.execute("ext-exec", { command }, new AbortController().signal);
+      return { code: r.is_error ? 1 : 0, output: r.content };
+    },
+    steer: (text) => {
+      // Print mode is one-shot; treat steering as a follow-up that the loop will
+      // see if it lands during a run. We don't actually queue more turns.
+      void text;
+    },
+    followUp: () => {
+      // No TUI to drain follow-ups; ignore (the run finishes and the process exits).
+    },
+    isRunning: () => false,
+  });
+  extensionRuntime.onError((info) => {
+    console.error(`[extension] ${info.path}: ${info.error}`);
+  });
+  await extensionRuntime.load();
+
   const ask: AskFn = async () => "deny";
   const promptText = await expandMentions(args.prompt, cwd);
   const messages: Message[] = [{ role: "user", content: [{ type: "text", text: promptText }] }];
   const baseTools = defaultTools("print", cwd);
   const wrapPerm = (tools: ReturnType<typeof defaultTools>) =>
-    wrapToolsWithPermissions(tools, permissionEngine, ask);
+    wrapToolsWithPermissions(tools, permissionEngine, ask, {
+      onPrompt: (req) => {
+        // Fire-and-forget so notify.ts etc. can observe prompts in -p too.
+        void extensionRuntime.emitPermissionRequested({ tool: req.tool, detail: req.detail });
+      },
+    });
+  const merged = extensionRuntime.mergedTools(baseTools);
+  extensionRuntime.syncReadOnlyNames(merged);
   const tools = wrapPerm([
-    ...baseTools,
+    ...merged,
     taskTool({
       provider,
       system,
       cwd,
-      subTools: (subCwd) => wrapPerm(defaultTools("print-sub", subCwd ?? cwd)),
+      subTools: (subCwd) => {
+        const subDefaults = defaultTools("print-sub", subCwd ?? cwd);
+        const subMerged = extensionRuntime.mergedTools(subDefaults).filter((t) => t.name !== "task");
+        return wrapPerm(subMerged);
+      },
       resolveProvider: (model) => makeProvider(providerId, { model }),
       onEvent: (ev) => events.emit(ev),
     }),
   ]);
 
   await runHooks(settings.hooks, { event: "turn_start", cwd });
-  const { stopReason } = await runAgentLoop({
-    provider,
-    system,
-    messages,
-    tools,
-    events,
-    signal: controller.signal,
-    maxTurns: args.maxTurns,
-  });
-  await runHooks(settings.hooks, { event: "turn_end", cwd });
+  await extensionRuntime.emitTurnStart();
+  let stopReason: Awaited<ReturnType<typeof runAgentLoop>>["stopReason"];
+  try {
+    ({ stopReason } = await runAgentLoop({
+      provider,
+      system,
+      messages,
+      tools,
+      events,
+      signal: controller.signal,
+      maxTurns: args.maxTurns,
+    }));
+  } finally {
+    await runHooks(settings.hooks, { event: "turn_end", cwd });
+    await extensionRuntime.emitTurnEnd();
+  }
   if (outputFormat === "json") {
     console.log(formatFinalResult({ stopReason, usage: lastUsage, messages }));
   }
