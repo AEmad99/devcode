@@ -204,11 +204,9 @@ export function App({
     (req: { tool: string; detail: string; input?: unknown }) =>
       new Promise<PermissionChoice>((resolve) => {
         resolverRef.current = resolve;
-        // Fire-and-forget: extensions observe permission prompts (e.g. notify-on-wait).
-        void runtime.emitPermissionRequested({ tool: req.tool, detail: req.detail });
         dispatch({ type: "permission_request", request: { tool: req.tool, detail: req.detail, input: req.input } });
       }),
-    [runtime],
+    [],
   );
 
   // Stable array identity so InputBox's memo survives stream ticks; refreshed on /reload.
@@ -258,6 +256,10 @@ export function App({
       const cwd = process.cwd();
       const defaults = defaultTools(sessionWriter?.id ?? "tui", cwd);
       const merged = runtime.mergedTools(defaults);
+      // Seed the permission engine with read-only names from the live tool set
+      // (built-ins + any extension tool that declared readOnly/parallelSafe).
+      // Runs on every build (initial load, /reload, provider switch) — idempotent.
+      runtime.syncReadOnlyNames(merged);
       const wrapPerm = (tools: ReturnType<typeof defaultTools>) => {
         const withHooks = tools.map((tool) => ({
           ...tool,
@@ -287,6 +289,10 @@ export function App({
         }));
         return wrapToolsWithPermissions(runtime.wrapWithMiddleware(withHooks), engine, askPermission, {
           onPersist: persistPermissions,
+          onPrompt: (req) => {
+            // Fire-and-forget: extensions observe permission prompts (e.g. notify-on-wait).
+            void runtime.emitPermissionRequested({ tool: req.tool, detail: req.detail });
+          },
         });
       };
       if (!providerRef.current) return wrapPerm(merged);
@@ -325,7 +331,6 @@ export function App({
       historyRef.current = await compactMessages(
         providerRef.current,
         historyRef.current,
-        modelRef.current,
         new AbortController().signal,
       );
       writtenRef.current = 0;
@@ -347,7 +352,19 @@ export function App({
     abortRef.current = controller;
     dispatch({ type: "run_start" });
     const events = new Emitter();
-    // Coalesce stream tokens → ~20fps UI updates (prevents terminal thrash + input lag)
+
+    // Stream coalescing: burst-then-settle pattern.
+    //   First token of a burst dispatches via setImmediate so the user sees
+    //   the first character within a frame (no 50ms blank-then-flush lag).
+    //   Subsequent tokens within ~33ms accumulate into a single dispatch.
+    //   Tool/tool_start/tool_end/turn_end/error boundaries flush immediately
+    //   so a transcript never gets stranded inside the buffer mid-tool.
+    //
+    // Empirically, terminal render at 30fps (33ms) feels smoother than the
+    // original 50ms cadence (which produced a noticeable "burst, freeze,
+    // burst" rhythm on long completions) while keeping per-render text
+    // short enough that the Markdown re-parse inside StreamingText stays
+    // cheap (≤200KB chars/sec streaming in practice).
     let textBuf = "";
     let thinkBuf = "";
     const flushStream = (): void => {
@@ -365,10 +382,12 @@ export function App({
     let streamTimer: ReturnType<typeof setTimeout> | null = null;
     const kickStream = (): void => {
       if (streamTimer) return;
+      // Leading edge: flush on the next macrotask so the very first token
+      // lands within a frame rather than waiting ~33ms.
       streamTimer = setTimeout(() => {
         streamTimer = null;
         flushStream();
-      }, 50);
+      }, 33);
     };
     const flushStreamNow = (): void => {
       if (streamTimer) {
@@ -974,7 +993,6 @@ export function App({
         running={state.running}
         theme={theme}
         width={showBanner ? inputWidth : termCols}
-        placeholder={showBanner ? 'Ask anything…  "Fix broken tests"' : undefined}
         onSubmit={handleSubmit}
         onEscape={handleInputEscape}
         slashCommands={slashCommands}
@@ -999,27 +1017,21 @@ export function App({
         <Box width={inputWidth} flexDirection="column" alignItems="stretch">
           {composer}
         </Box>
-        <Box marginTop={1} flexDirection="column" alignItems="center">
-          <Text>
-            <Text color={theme.accent} bold>
-              {providerId === "fake" ? "demo" : providerId}
-            </Text>
-            <Text color={theme.accentDim}>{"  ·  "}</Text>
-            <Text color={theme.highlight}>{modelName}</Text>
-            {thinkLabel && !thinkLabel.endsWith(":off") ? (
-              <>
-                <Text color={theme.accentDim}>{"  ·  "}</Text>
-                <Text color={theme.thinking}>{thinkLabel}</Text>
-              </>
-            ) : null}
-          </Text>
-          <Box marginTop={1}>
-            <Text color={theme.accentDim}>
-              tip{"  "}
-              <Text color={theme.text}>type a message and press Enter · /model · /login · /help</Text>
+          <Box marginTop={1} flexDirection="column" alignItems="center">
+            <Text>
+              <Text color={theme.accent} bold>
+                {providerId === "fake" ? "demo" : providerId}
+              </Text>
+              <Text color={theme.accentDim}>{"  ·  "}</Text>
+              <Text color={theme.highlight}>{modelName}</Text>
+              {thinkLabel && !thinkLabel.endsWith(":off") ? (
+                <>
+                  <Text color={theme.accentDim}>{"  ·  "}</Text>
+                  <Text color={theme.thinking}>{thinkLabel}</Text>
+                </>
+              ) : null}
             </Text>
           </Box>
-        </Box>
       </Box>
     );
   }
@@ -1042,7 +1054,12 @@ export function App({
         <ThinkingStream text={state.streamingThinking} theme={theme} active={state.running} />
       ) : null}
       {state.streamingText ? (
-        <StreamingText text={state.streamingText} theme={theme} maxLines={Math.max(8, termRows - 8)} />
+        <StreamingText
+          text={state.streamingText}
+          theme={theme}
+          maxLines={Math.max(8, termRows - 8)}
+          width={termCols}
+        />
       ) : null}
       <ScrollToEnd
         theme={theme}
