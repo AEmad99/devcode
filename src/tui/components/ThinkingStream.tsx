@@ -13,10 +13,17 @@ export const ThinkingStream = memo(function ThinkingStream({
   text,
   theme,
   active = true,
+  maxLines = 6,
 }: {
   text: string;
   theme: Theme;
   active?: boolean;
+  /**
+   * Max body lines shown. The thinking block lives in the dynamic (non-Static)
+   * region; an unbounded tail can push the frame to fullscreen and trigger
+   * Ink's scrollback-wiping clearTerminal. Keep it small.
+   */
+  maxLines?: number;
 }) {
   const [tick, setTick] = useState(0);
 
@@ -29,7 +36,8 @@ export const ThinkingStream = memo(function ThinkingStream({
   const word = WORDS[Math.floor(tick / 4) % WORDS.length];
   const spin = SPINNER[tick % SPINNER.length];
   const lines = text ? text.split("\n") : [];
-  const tail = lines.slice(-6);
+  const cap = Math.max(1, maxLines);
+  const tail = lines.slice(-cap);
   const more = lines.length - tail.length;
 
   return (

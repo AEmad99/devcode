@@ -29,4 +29,12 @@ describe("layoutFromTerminal", () => {
     expect(l.columns).toBeGreaterThanOrEqual(40);
     expect(l.rows).toBeGreaterThanOrEqual(10);
   });
+
+  test("liveBudget stays strictly below viewport rows so Ink never wipes scrollback", () => {
+    for (const rows of [10, 20, 24, 40, 60, 100]) {
+      const l = layoutFromTerminal(80, rows);
+      expect(l.liveBudget).toBeLessThan(l.rows);
+      expect(l.liveBudget).toBeGreaterThanOrEqual(6);
+    }
+  });
 });

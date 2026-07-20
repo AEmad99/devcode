@@ -153,6 +153,7 @@ export const MessageList = memo(function MessageList({
   windowSize = 40,
   jumpFocusId,
   width,
+  maxPending = 3,
 }: {
   entries: Entry[];
   theme: Theme;
@@ -162,11 +163,23 @@ export const MessageList = memo(function MessageList({
   jumpFocusId?: number | null;
   /** Terminal columns — reflow wrapping when the window resizes. */
   width?: number;
+  /**
+   * Max running tool blocks rendered in the live region. Each running block
+   * can be tall (write/edit diffs); an unbounded list can push the dynamic
+   * frame to fullscreen, which makes Ink 7 clearTerminal and wipe scrollback.
+   * The most recent blocks are kept; older running ones collapse to a count.
+   */
+  maxPending?: number;
 }) {
   const committed = entries.filter((e) => e.kind !== "tool" || e.status === "done");
   const pending = entries.filter((e) => e.kind === "tool" && e.status === "running");
   const followTail = scrollOffset === 0 && jumpFocusId == null;
   const { display, hiddenEarlier } = listForDisplay(committed, { followTail, scrollOffset, windowSize, jumpFocusId });
+
+  // Keep only the newest  running blocks in the live region; the
+  // rest collapse to a one-line counter so the frame height stays bounded.
+  const shownPending = pending.slice(-maxPending);
+  const collapsedPending = pending.length - shownPending.length;
 
   // followTail: Static owns the transcript (scrollback). Pending tools stay in
   // the dynamic frame so their progress can update until they complete and
@@ -181,9 +194,12 @@ export const MessageList = memo(function MessageList({
             </Box>
           )}
         </Static>
-        {pending.length > 0 ? (
+        {collapsedPending > 0 ? (
+          <Text color={theme.accentDim}>+{collapsedPending} more running tool{collapsedPending === 1 ? "" : "s"}…</Text>
+        ) : null}
+        {shownPending.length > 0 ? (
           <Box flexDirection="column" width={width}>
-            {pending.map((entry) => (
+            {shownPending.map((entry) => (
               <EntryView key={entry.id} entry={entry} theme={theme} />
             ))}
           </Box>
@@ -207,7 +223,10 @@ export const MessageList = memo(function MessageList({
         />
       ))}
 
-      {pending.map((entry) => (
+      {collapsedPending > 0 ? (
+        <Text color={theme.accentDim}>+{collapsedPending} more running tool{collapsedPending === 1 ? "" : "s"}…</Text>
+      ) : null}
+      {shownPending.map((entry) => (
         <EntryView key={entry.id} entry={entry} theme={theme} />
       ))}
     </Box>

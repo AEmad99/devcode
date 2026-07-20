@@ -1,6 +1,6 @@
 {
   "name": "devcode",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Minimal self-extensible TUI coding agent (Claude Code replica) in TypeScript + Ink + Bun",
   "keywords": ["coding-agent", "cli", "tui", "llm", "anthropic", "claude", "ink", "bun"],
   "license": "MIT",

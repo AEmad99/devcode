@@ -2,9 +2,22 @@ import { fuzzyScore } from "./fuzzy.js";
 
 export { fuzzyScore } from "./fuzzy.js";
 
+export interface SlashArgOption {
+  value: string;
+  description?: string;
+}
+
 export interface SlashCommand {
   name: string;
   description: string;
+  /**
+   * Optional dropdown of valid argument values for this command. When set,
+   * the InputBox renders an inline option picker after the user types the
+   * command plus a space, so they select a value from a list instead of
+   * typing free-form text. Commands that accept arbitrary text args (like
+   * /name, /export) leave this undefined and fall back to plain input.
+   */
+  args?: SlashArgOption[];
 }
 
 export const SLASH_COMMANDS: SlashCommand[] = [
@@ -20,8 +33,29 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "memory", description: "Show persistent memory (/memory clear [global|project|all])" },
   { name: "model", description: "Open model picker (or /model <id>)" },
   { name: "provider", description: "Open provider picker (or /provider <id>)" },
-  { name: "thinking", description: "Show/set thinking level (off|low|medium|high|max)" },
-  { name: "theme", description: "Show/set UI theme" },
+  {
+    name: "thinking",
+    description: "Show/set thinking level (off|low|medium|high|max)",
+    args: [
+      { value: "off", description: "no extended thinking" },
+      { value: "low", description: "brief reasoning" },
+      { value: "medium", description: "default reasoning" },
+      { value: "high", description: "deeper reasoning" },
+      { value: "max", description: "maximal reasoning" },
+    ],
+  },
+  {
+    name: "theme",
+    description: "Show/set UI theme",
+    args: [
+      { value: "dev", description: "Dev family cyan" },
+      { value: "dusk", description: "Violet" },
+      { value: "ember", description: "Warm amber" },
+      { value: "mono", description: "High-contrast grayscale" },
+      { value: "forest", description: "Green terminal classic" },
+      { value: "claude", description: "Warm coral accent" },
+    ],
+  },
   { name: "login", description: "Log in to a provider (OAuth or API key)" },
   { name: "logout", description: "Log out of a provider" },
   { name: "reload", description: "Reload extensions" },

@@ -192,7 +192,27 @@ export const InputBox = memo(function InputBox({
   const slashMatchesRef = useRef(slashMatches);
   slashMatchesRef.current = slashMatches;
 
-  const atTok = !slashOnly ? atTokenAtCursor(buf.value, buf.cursor) : null;
+  // Argument dropdown: when the buffer is "/<cmd> <partial-arg>" and the
+  // resolved command exposes a fixed set of arg options, show them inline
+  // so the user picks from a list instead of typing the value free-form.
+  const slashArgCmd =
+    slashPrefix !== null && slashCommands
+      ? slashCommands.find((c) => c.name === slashPrefix.toLowerCase() && c.args && c.args.length > 0)
+      : undefined;
+  const slashArgActive = slashArgCmd !== undefined && buf.value.includes(" ") && !buf.value.includes("\n");
+  const slashArgQuery = slashArgActive ? buf.value.slice(buf.value.indexOf(" ") + 1) : "";
+  const slashArgOptions = slashArgActive && slashArgCmd?.args
+    ? slashArgCmd.args
+        .filter((a) => !slashArgQuery || a.value.startsWith(slashArgQuery) || a.value.includes(slashArgQuery))
+        .slice(0, 10)
+    : [];
+  const activeArg = Math.min(slashIndex, Math.max(0, slashArgOptions.length - 1));
+  const slashArgOptionsRef = useRef(slashArgOptions);
+  slashArgOptionsRef.current = slashArgOptions;
+  const slashArgActiveRef = useRef(slashArgActive);
+  slashArgActiveRef.current = slashArgActive;
+
+  const atTok = !slashOnly && !slashArgActive ? atTokenAtCursor(buf.value, buf.cursor) : null;
   const atMatches =
     atTok && fileCandidates && fileCandidates.length > 0
       ? rankByFuzzy(fileCandidates, atTok.query, (p) => [p])
@@ -216,6 +236,9 @@ export const InputBox = memo(function InputBox({
       const matches = slashMatchesRef.current;
       const sOnly = cur.value.startsWith("/") && !cur.value.includes(" ") && !cur.value.includes("\n");
       const sIdx = Math.min(slashIndexRef.current, Math.max(0, matches.length - 1));
+      const argOptions = slashArgOptionsRef.current;
+      const argActive = slashArgActiveRef.current && argOptions.length > 0;
+      const argIdx = Math.min(slashIndexRef.current, Math.max(0, argOptions.length - 1));
       const aMatches = atMatchesRef.current;
       const aTok = atTokRef.current;
       const aIdx = Math.min(atIndexRef.current, Math.max(0, aMatches.length - 1));
@@ -239,6 +262,21 @@ export const InputBox = memo(function InputBox({
       }
       // Enter / CR
       if (key.return || input === "\r") {
+        // If the typed query already matches a valid option exactly, submit
+        // instead of re-picking from the dropdown (so /thinking off + Enter
+        // runs the command rather than re-filling the buffer).
+        const argQueryExact =
+          argActive && argOptions.some((o) => o.value === cur.value.slice(cur.value.indexOf(" ") + 1));
+        if (argActive && !argQueryExact) {
+          const pick = argOptions[argIdx] ?? argOptions[0];
+          const sp = cur.value.indexOf(" ");
+          const next = cur.value.slice(0, sp + 1) + pick.value;
+          const nb = { value: next, cursor: next.length };
+          bufRef.current = nb;
+          setBuf(nb);
+          setSlashIndex(0);
+          return;
+        }
         if (sOnly && matches.length > 0) {
           const pick = matches[sIdx] ?? matches[0];
           const next = `/${pick.name} `;
@@ -329,6 +367,10 @@ export const InputBox = memo(function InputBox({
         return;
       }
       if (key.upArrow) {
+        if (argActive) {
+          setSlashIndex((i) => (i + argOptions.length - 1) % argOptions.length);
+          return;
+        }
         if (sOnly && matches.length > 0) {
           setSlashIndex((i) => (i + matches.length - 1) % matches.length);
           return;
@@ -354,6 +396,10 @@ export const InputBox = memo(function InputBox({
         return;
       }
       if (key.downArrow) {
+        if (argActive) {
+          setSlashIndex((i) => (i + 1) % argOptions.length);
+          return;
+        }
         if (sOnly && matches.length > 0) {
           setSlashIndex((i) => (i + 1) % matches.length);
           return;
@@ -379,6 +425,16 @@ export const InputBox = memo(function InputBox({
         return;
       }
       if (key.tab) {
+        if (argActive) {
+          const pick = argOptions[argIdx] ?? argOptions[0];
+          const sp = cur.value.indexOf(" ");
+          const next = cur.value.slice(0, sp + 1) + pick.value;
+          const nb = { value: next, cursor: next.length };
+          bufRef.current = nb;
+          setBuf(nb);
+          setSlashIndex(0);
+          return;
+        }
         if (sOnly && matches.length > 0) {
           const pick = matches[sIdx] ?? matches[0];
           if (matches.length === 1) {
@@ -453,6 +509,25 @@ export const InputBox = memo(function InputBox({
                   {" — "}
                   {m.description}
                 </Text>
+              </Text>
+            ))
+          )}
+        </Box>
+      ) : slashArgActive ? (
+        <Box flexDirection="column" marginBottom={0} paddingX={1}>
+          {slashArgOptions.length === 0 ? (
+            <Text color={t.error}>no option for /{slashArgCmd?.name} {slashArgQuery}</Text>
+          ) : (
+            slashArgOptions.map((o, i) => (
+              <Text key={o.value} color={i === activeArg ? t.accent : t.text}>
+                {i === activeArg ? "❯ " : "  "}/
+                {slashArgCmd?.name} {o.value}
+                {o.description ? (
+                  <Text color={t.accentDim}>
+                    {" — "}
+                    {o.description}
+                  </Text>
+                ) : null}
               </Text>
             ))
           )}

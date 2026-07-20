@@ -473,6 +473,44 @@ describe("MessageList listForDisplay", () => {
   });
 });
 
+describe("MessageList pending tool cap", () => {
+  const mkTool = (id: number, status: "running" | "done" = "running"): Entry => ({
+    id,
+    kind: "tool" as const,
+    toolId: `t${id}`,
+    name: "read",
+    input: { path: "x" },
+    status,
+  });
+
+  test("followTail keeps only the newest maxPending running blocks and collapses the rest", async () => {
+    const entries: Entry[] = [
+      { id: 1, kind: "info" as const, text: "hi" },
+      ...Array.from({ length: 5 }, (_, i) => mkTool(i + 2)),
+    ];
+    const { lastFrame, unmount } = render(
+      <MessageList entries={entries} theme={theme} scrollOffset={0} windowSize={40} maxPending={2} />,
+    );
+    await tick(40);
+    const frame = lastFrame() ?? "";
+    // Newest two running tool headers are shown
+    expect(frame).toContain("read");
+    // Older running tools collapsed into a counter line
+    expect(frame).toMatch(/\+3 more running tools/);
+    unmount();
+  });
+
+  test("followTail with no pending tools renders nothing extra", async () => {
+    const entries: Entry[] = [{ id: 1, kind: "info" as const, text: "hi" }];
+    const { lastFrame, unmount } = render(
+      <MessageList entries={entries} theme={theme} scrollOffset={0} windowSize={40} maxPending={2} />,
+    );
+    await tick(20);
+    expect(lastFrame() ?? "").not.toMatch(/more running tool/);
+    unmount();
+  });
+});
+
 describe("store reducer", () => {
   const usage: Usage = { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 };
 

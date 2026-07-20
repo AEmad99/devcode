@@ -925,7 +925,7 @@ export function App({
   // skipped when neither changed.
   const cost = useMemo(() => estimateCost(modelName, state.usage), [modelName, state.usage]);
 
-  const { columns: termCols, rows: termRows, inputWidth, messageWindow, pickerWindow } = layout;
+  const { columns: termCols, rows: termRows, inputWidth, messageWindow, pickerWindow, liveBudget } = layout;
 
   const composer =
     login ? (
@@ -1074,22 +1074,35 @@ export function App({
   // is rewritten each frame — same pattern as Grok Build and other agent TUIs.
   return (
     <Box flexDirection="column" width={termCols}>
+      {/* In scrolled/jump mode MessageList renders the window LIVE (not via
+          <Static>), so tall entries would push the frame to fullscreen and
+          trigger Ink's scrollback-wiping clearTerminal. Cap the live window to
+          a few entries so the frame stays under the viewport; PageUp/PageDown
+          pages through. */}
       <MessageList
         entries={state.entries}
         theme={theme}
         scrollOffset={jumpIdx >= 0 ? 0 : state.scrollOffset}
-        windowSize={messageWindow}
+        windowSize={jumpIdx >= 0 || state.scrollOffset > 0
+          ? Math.min(messageWindow, Math.max(4, Math.floor(liveBudget / 3)))
+          : messageWindow}
         jumpFocusId={jumpFocusId}
         width={termCols}
+        maxPending={Math.max(1, Math.floor(liveBudget / 6))}
       />
       {state.streamingThinking || (state.running && !state.streamingText && !anyToolRunning) ? (
-        <ThinkingStream text={state.streamingThinking} theme={theme} active={state.running} />
+        <ThinkingStream
+          text={state.streamingThinking}
+          theme={theme}
+          active={state.running}
+          maxLines={Math.max(2, Math.min(6, Math.floor(liveBudget / 4)))}
+        />
       ) : null}
       {state.streamingText ? (
         <StreamingText
           text={state.streamingText}
           theme={theme}
-          maxLines={Math.max(8, termRows - 8)}
+          maxLines={Math.max(4, Math.min(liveBudget - 6, termRows - 8))}
           width={termCols}
         />
       ) : null}

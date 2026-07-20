@@ -14,6 +14,22 @@ export interface TerminalLayout {
   scrollStep: number;
   /** Searchable picker visible rows. */
   pickerWindow: number;
+  /**
+   * Hard ceiling for the dynamic (non-Static) region's height in rows.
+   *
+   * Ink 7's shouldClearTerminalForFrame triggers a full clearTerminal write
+   * (ESC[2J ESC[3J ESC[H, which erases the whole scrollback buffer) whenever
+   * the dynamic output height >= the viewport rows, and on Windows Console
+   * whenever the previous or next frame was fullscreen. A fullscreen frame
+   * therefore discards the Static transcript the user needs to scroll back
+   * through.
+   *
+   * Keeping the live region under this budget guarantees Ink stays on its
+   * incremental erase-lines path (cursor up + erase line), which preserves
+   * scrollback. The budget leaves a margin below the viewport so a trailing
+   * newline or a border edge can never push the frame to fullscreen.
+   */
+  liveBudget: number;
 }
 
 const MIN_COLS = 40;
@@ -32,5 +48,9 @@ export function layoutFromTerminal(cols?: number | null, rows?: number | null): 
   const messageWindow = Math.max(6, r - CHROME_ROWS);
   const scrollStep = Math.max(3, Math.floor(messageWindow / 3));
   const pickerWindow = Math.max(6, Math.min(16, r - 12));
-  return { columns, rows: r, inputWidth, messageWindow, scrollStep, pickerWindow };
+  // Strictly less than the viewport so Ink never classifies the frame as
+  // fullscreen and wipes scrollback. Reserve a few rows for the input border
+  // and status line which always live in the live region.
+  const liveBudget = Math.max(6, r - 3);
+  return { columns, rows: r, inputWidth, messageWindow, scrollStep, pickerWindow, liveBudget };
 }
