@@ -68,6 +68,25 @@ export const PI_API_CATALOG: CatalogEntry[] = [
     ],
     headers: { "HTTP-Referer": "https://devcode.local", "X-Title": "DevCode" },
   },
+  {
+    id: "ollama-cloud",
+    name: "Ollama Cloud",
+    envKeys: ["OLLAMA_API_KEY"],
+    protocol: "openai-completions",
+    // OpenAI-compatible surface on ollama.com (Bearer OLLAMA_API_KEY).
+    // Native host is https://ollama.com/api; chat completions live under /v1.
+    url: "https://ollama.com/v1/chat/completions",
+    defaultModel: "gpt-oss:120b",
+    fallbackModels: [
+      m("gpt-oss:120b", "GPT-OSS 120B"),
+      m("kimi-k2.7-code", "Kimi K2.7 Code"),
+      m("deepseek-v4-flash", "DeepSeek V4 Flash"),
+      m("qwen3.5:397b", "Qwen3.5 397B"),
+      m("minimax-m3", "MiniMax M3"),
+      m("glm-5.2", "GLM 5.2"),
+    ],
+    notes: "Create a key at https://ollama.com/settings/keys",
+  },
 
   // --- pi API-key list ---
   {

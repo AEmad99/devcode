@@ -400,6 +400,43 @@ describe("ChatCompletionsProvider (xAI / DeepSeek)", () => {
     expect(calls[0].url).toBe("https://api.deepseek.com/chat/completions");
     expect((calls[0].init?.headers as any).authorization).toBe("Bearer ds-key");
   });
+
+  test("Ollama Cloud sends chat completions to ollama.com/v1", async () => {
+    const { calls, fn } = mockFetch(() =>
+      sseResponse([
+        { choices: [{ delta: { content: "Cloud" } }] },
+        { choices: [{ delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 4, completion_tokens: 2 } },
+      ]),
+    );
+    const provider = new ChatCompletionsProvider({
+      id: "ollama-cloud",
+      url: "https://ollama.com/v1/chat/completions",
+      apiKey: "ollama-key",
+      model: "gpt-oss:120b",
+      fetchImpl: fn,
+    });
+    const events = await collect(provider.stream(params()));
+    expect(events[0]).toEqual({ type: "text_delta", text: "Cloud" });
+    expect(calls[0].url).toBe("https://ollama.com/v1/chat/completions");
+    expect((calls[0].init?.headers as any).authorization).toBe("Bearer ollama-key");
+    expect(bodyOf(calls[0]).model).toBe("gpt-oss:120b");
+  });
+});
+
+describe("ollama-cloud catalog entry", () => {
+  test("is registered with OLLAMA_API_KEY and cloud URL", () => {
+    const entry = PI_API_CATALOG.find((e) => e.id === "ollama-cloud");
+    expect(entry).toBeDefined();
+    expect(entry!.name).toBe("Ollama Cloud");
+    expect(entry!.envKeys).toContain("OLLAMA_API_KEY");
+    expect(entry!.protocol).toBe("openai-completions");
+    expect(entry!.url).toBe("https://ollama.com/v1/chat/completions");
+    expect(entry!.defaultModel).toBe("gpt-oss:120b");
+    const byId = Object.fromEntries(REGISTRY.map((s) => [s.id, s]));
+    expect(byId["ollama-cloud"]).toBeDefined();
+    expect(byId["ollama-cloud"].envKeys).toContain("OLLAMA_API_KEY");
+    expect(supportsApiKey(byId["ollama-cloud"])).toBe(true);
+  });
 });
 
 describe("REGISTRY covers pi providers", () => {

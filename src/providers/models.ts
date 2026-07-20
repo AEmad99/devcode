@@ -29,6 +29,7 @@ const CATALOG_KEYS: Record<string, string> = {
   google: "google",
   copilot: "github-copilot",
   openrouter: "openrouter",
+  "ollama-cloud": "ollama-cloud",
   xai: "xai",
   deepseek: "deepseek",
   minimax: "minimax",

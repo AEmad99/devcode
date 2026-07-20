@@ -14,7 +14,7 @@ DevCode is intentionally small: a thin agentic loop, eight built-in tools, strea
 - **Permissions** — allow / ask / deny, session remember, persistent rules in `settings.json`, circuit breakers
 - **Bundled extensions** — `web_search`/`web_fetch`, markdown commands, checkpoints/`/rewind`, format-on-edit, notify, auto-commit, MCP client
 - **Self-extension** — jiti-loaded TypeScript extensions (tools, commands, hooks) + `/reload`
-- **Multi-provider** — Anthropic, OpenAI, OpenAI Codex, Google Gemini, GitHub Copilot, OpenRouter
+- **Multi-provider** — Anthropic, OpenAI, OpenAI Codex, Google Gemini, GitHub Copilot, OpenRouter, Ollama Cloud
 
 ## Install (Windows)
 
@@ -59,7 +59,7 @@ bun install -g github:AEmad99/devcode
 |------|-------------|
 | `-p` / `--print <prompt>` | Non-interactive run to completion |
 | `--model <id>` | Model override |
-| `--provider <id>` | Provider id (`anthropic`, `openai`, `openai-codex`, `google`, `copilot`, `openrouter`) |
+| `--provider <id>` | Provider id (`anthropic`, `openai`, `openai-codex`, `google`, `copilot`, `openrouter`, `ollama-cloud`, …) |
 | `--continue` | Resume the most recent session for this cwd |
 | `--resume <prefix>` | Resume a session by id prefix |
 | `--max-turns <n>` | Cap agent turns (default 100) |
@@ -119,6 +119,7 @@ Aligned with [pi’s provider list](https://github.com/earendil-works/pi/blob/ma
 | `openai` | `OPENAI_API_KEY` |
 | `google` | `GEMINI_API_KEY` / `GOOGLE_API_KEY` |
 | `openrouter` | `OPENROUTER_API_KEY` |
+| `ollama-cloud` | `OLLAMA_API_KEY` |
 | `xai` | `XAI_API_KEY` |
 | `deepseek` | `DEEPSEEK_API_KEY` |
 | `ant-ling` | `ANT_LING_API_KEY` |
