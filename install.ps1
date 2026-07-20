@@ -9,6 +9,11 @@
 #   $env:DEVCODE_REF         = "main"
 
 $ErrorActionPreference = "Stop"
+# PS 7.2+: do not treat non-zero native exit codes as terminating errors.
+# We check $LASTEXITCODE ourselves (git/bun often write progress to stderr).
+if (Test-Path variable:PSNativeCommandUseErrorActionPreference) {
+  $PSNativeCommandUseErrorActionPreference = $false
+}
 
 $RepoUrl = if ($env:DEVCODE_REPO) { $env:DEVCODE_REPO } else { "https://github.com/AEmad99/devcode.git" }
 $Ref = if ($env:DEVCODE_REF) { $env:DEVCODE_REF } else { "main" }
@@ -29,12 +34,50 @@ function Ensure-Command([string]$name) {
   return [bool](Get-Command $name -ErrorAction SilentlyContinue)
 }
 
+# Run an external program without treating stderr progress as a terminating error.
+# PowerShell wraps native stderr as ErrorRecords; with $ErrorActionPreference=Stop
+# that aborts the script even when the command succeeds (classic git fetch issue).
+function Invoke-Native {
+  param(
+    [Parameter(Mandatory = $true)][string]$FilePath,
+    [Parameter(ValueFromRemainingArguments = $true)][string[]]$ArgumentList
+  )
+  $prevEap = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  try {
+    # Merge stderr into success stream so it is not written as ErrorRecords.
+    $output = & $FilePath @ArgumentList 2>&1
+    $code = $LASTEXITCODE
+    foreach ($line in $output) {
+      if ($null -eq $line) { continue }
+      if ($line -is [System.Management.Automation.ErrorRecord]) {
+        $msg = $line.Exception.Message
+        if (-not $msg) { $msg = $line.ToString() }
+        # Skip empty stderr frames PowerShell wraps as RemoteException with no text.
+        if ($msg -and $msg -notmatch '^System\.Management\.Automation\.RemoteException$') {
+          Write-Host $msg
+        }
+      } else {
+        Write-Host $line
+      }
+    }
+    return $code
+  } finally {
+    $ErrorActionPreference = $prevEap
+  }
+}
+
+function Invoke-Git {
+  param([Parameter(ValueFromRemainingArguments = $true)][string[]]$ArgumentList)
+  return Invoke-Native -FilePath "git" @ArgumentList
+}
+
 function Ensure-Bun {
   if (Ensure-Command "bun") {
     Write-Host "Bun: $(bun --version)"
     return
   }
-  Write-Step "Bun not found — installing Bun"
+  Write-Step "Bun not found - installing Bun"
   # Official Windows install (adds bun to user PATH for new shells)
   powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://bun.sh/install.ps1 | iex"
   $bunPaths = @(
@@ -62,8 +105,8 @@ function Add-ToUserPath([string]$dir) {
   $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
   if (-not $userPath) { $userPath = "" }
   $parts = $userPath -split ";" | Where-Object { $_ -and $_.Trim() -ne "" }
-  $normalized = $parts | ForEach-Object { $_.TrimEnd("\").ToLowerInvariant() }
-  $target = $dir.TrimEnd("\").ToLowerInvariant()
+  $normalized = $parts | ForEach-Object { $_.TrimEnd('\').ToLowerInvariant() }
+  $target = $dir.TrimEnd('\').ToLowerInvariant()
   if ($normalized -contains $target) {
     Write-Host "PATH already contains $dir"
     return
@@ -93,13 +136,16 @@ if (Test-Path (Join-Path $SrcDir ".git")) {
   Write-Step "Updating existing clone"
   Push-Location $SrcDir
   try {
-    git fetch --tags --force origin 2>$null
-    git checkout $Ref 2>$null
-    git pull --ff-only origin $Ref 2>$null
-    if ($LASTEXITCODE -ne 0) {
+    $null = Invoke-Git fetch --tags --force origin
+    $null = Invoke-Git checkout $Ref
+    $pullCode = Invoke-Git pull --ff-only origin $Ref
+    if ($pullCode -ne 0) {
       # Detached or first fetch of ref
-      git fetch origin $Ref
-      git checkout -B $Ref "origin/$Ref"
+      $null = Invoke-Git fetch origin $Ref
+      $checkoutCode = Invoke-Git checkout -B $Ref "origin/$Ref"
+      if ($checkoutCode -ne 0) {
+        throw "Failed to update existing clone to $Ref (exit $checkoutCode)"
+      }
     }
   } finally {
     Pop-Location
@@ -109,27 +155,30 @@ if (Test-Path (Join-Path $SrcDir ".git")) {
   if (Test-Path $SrcDir) {
     Remove-Item -Recurse -Force $SrcDir
   }
-  git clone --branch $Ref --depth 1 $RepoUrl $SrcDir
-  if ($LASTEXITCODE -ne 0) {
+  $cloneCode = Invoke-Git clone --branch $Ref --depth 1 $RepoUrl $SrcDir
+  if ($cloneCode -ne 0) {
     # Branch might be master on first publish
-    git clone --depth 1 $RepoUrl $SrcDir
+    $cloneCode = Invoke-Git clone --depth 1 $RepoUrl $SrcDir
+    if ($cloneCode -ne 0) {
+      throw "git clone failed (exit $cloneCode)"
+    }
   }
 }
 
 Write-Step "Installing dependencies"
 Push-Location $SrcDir
 try {
-  bun install
-  if ($LASTEXITCODE -ne 0) { throw "bun install failed" }
+  $code = Invoke-Native -FilePath "bun" install
+  if ($code -ne 0) { throw "bun install failed (exit $code)" }
 
   Write-Step "Building dist/index.js (Node-compatible)"
-  bun run build
-  if ($LASTEXITCODE -ne 0) { throw "bun run build failed" }
+  $code = Invoke-Native -FilePath "bun" run build
+  if ($code -ne 0) { throw "bun run build failed (exit $code)" }
 
   Write-Step "Compiling native Windows binary"
-  bun run compile
-  if ($LASTEXITCODE -ne 0) {
-    Write-Host "compile failed — falling back to node launcher" -ForegroundColor Yellow
+  $code = Invoke-Native -FilePath "bun" run compile
+  if ($code -ne 0) {
+    Write-Host "compile failed - falling back to node launcher" -ForegroundColor Yellow
   }
 } finally {
   Pop-Location
