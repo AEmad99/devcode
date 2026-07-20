@@ -16,6 +16,21 @@ type Block =
   | { type: "hr" };
 
 function parseBlocks(md: string): Block[] {
+  const cached = BLOCK_PARSE_CACHE.get(md);
+  if (cached) return cached;
+  const blocks = parseBlocksUncached(md);
+  if (BLOCK_PARSE_CACHE.size < BLOCK_PARSE_CACHE_MAX) BLOCK_PARSE_CACHE.set(md, blocks);
+  return blocks;
+}
+
+// parseBlocks is pure over the input string. During streaming the <StreamingText>
+// body changes every tick, so the parse itself can't be skipped — but committed
+// <Static> entries re-render on parent updates (tool adds) and would otherwise
+// re-parse unchanged markdown each time. Bounded map keeps hot lookups free.
+const BLOCK_PARSE_CACHE = new Map<string, Block[]>();
+const BLOCK_PARSE_CACHE_MAX = 512;
+
+function parseBlocksUncached(md: string): Block[] {
   const lines = md.split("\n");
   const blocks: Block[] = [];
   let i = 0;

@@ -5,6 +5,8 @@ import { exitCodeForLoopResult } from "./core/exit-codes.js";
 import { captureGitSnapshot, formatGitSnapshot } from "./core/git-snapshot.js";
 import { runHooks } from "./core/hooks.js";
 import { runAgentLoop } from "./core/loop.js";
+import { formatUpdateInfo, getUpdateInfo } from "./core/update.js";
+import { appVersion } from "./tui/brand.js";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { buildSystemPrompt } from "./core/prompt.js";
@@ -21,7 +23,7 @@ import {
 } from "./core/session.js";
 import { loadSettings, rememberChoice } from "./core/settings.js";
 import { formatSkillsIndex, loadAllSkills } from "./core/skills.js";
-import { enterFullScreen, installScreenCleanupOnce } from "./tui/screen-mode.js";
+import { enterScreenMode, installScreenCleanupOnce } from "./tui/screen-mode.js";
 import { expandMentions } from "./core/mentions.js";
 import { defaultTools } from "./core/tools/index.js";
 import { taskTool } from "./core/tools/task.js";
@@ -55,6 +57,8 @@ interface CliArgs {
   permissionMode?: PermissionMode;
   name?: string;
   systemAppend?: string;
+  version?: boolean;
+  update?: boolean;
 }
 
 function parsePermissionMode(v: string): PermissionMode {
@@ -87,6 +91,10 @@ function parseArgs(argv: string[]): CliArgs {
       args.name = argv[++i];
     } else if (a === "--append-system") {
       args.systemAppend = argv[++i];
+    } else if (a === "-V" || a === "--version") {
+      args.version = true;
+    } else if (a === "--update") {
+      args.update = true;
     } else if (!a.startsWith("-")) positional.push(a);
   }
   if (args.prompt === undefined && positional.length > 0) args.prompt = positional.join(" ");
@@ -257,7 +265,7 @@ async function launchTui(args: CliArgs): Promise<void> {
   // then hand off to Ink. Without this, the TUI paints into whatever rows are
   // left after the prompt (or after `less`, or after a multi-line header),
   // and the user sees a TUI narrower than the actual viewport.
-  enterFullScreen();
+  enterScreenMode();
   // Restore the original screen on every plausible exit path: normal exit,
   // Ctrl+C twice, SIGTERM, /exit, uncaught errors. setupScreenCleanupOnce is
   // idempotent against multiple terminations, but we only call it once.
@@ -284,6 +292,16 @@ async function launchTui(args: CliArgs): Promise<void> {
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
+  if (args.version) {
+    console.log(appVersion());
+    return;
+  }
+  if (args.update) {
+    const info = await getUpdateInfo();
+    console.log(formatUpdateInfo(info));
+    if (info.hasUpdate) process.exitCode = 0;
+    return;
+  }
   if (!args.prompt) {
     await launchTui(args);
     return;

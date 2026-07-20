@@ -187,7 +187,9 @@ export class AnthropicProvider implements Provider {
         const eof = done;
         if (eof) break;
         buffer += decoder.decode(value, { stream: true });
-        buffer = buffer.replace(/\r\n/g, "\n");
+        // Only normalize CRLF when a CR is actually present (rare over SSE) —
+        // avoids allocating a new string on every chunk in the common case.
+        if (buffer.indexOf("\r") !== -1) buffer = buffer.replace(/\r\n/g, "\n");
         let sep: number;
         while ((sep = buffer.indexOf("\n\n")) !== -1) {
           const raw = buffer.slice(0, sep);

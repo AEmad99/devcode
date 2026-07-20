@@ -49,7 +49,7 @@ function colorFor(kind: TokenKind, theme: Theme): string | undefined {
 }
 
 /** Tokenize one source line. */
-export function tokenizeLine(line: string, lang = ""): Token[] {
+function tokenizeLineUncached(line: string, lang = ""): Token[] {
   const tokens: Token[] = [];
   const L = lang.toLowerCase();
   let i = 0;
@@ -137,5 +137,20 @@ export function tokenizeLine(line: string, lang = ""): Token[] {
 
   return tokens.length ? tokens : [{ kind: "plain", text: line || " " }];
 }
+
+export function tokenizeLine(line: string, lang = ""): Token[] {
+  const cacheKey = (lang || "") + "\0" + line;
+  const cached = TOKEN_CACHE.get(cacheKey);
+  if (cached) return cached;
+  const tokens = tokenizeLineUncached(line, lang);
+  if (TOKEN_CACHE.size < TOKEN_CACHE_MAX) TOKEN_CACHE.set(cacheKey, tokens);
+  return tokens;
+}
+
+// Tokenize is pure over (lang, line). A streaming code block re-renders every
+// ~33ms; without a cache every line of every code block was re-tokenized on
+// each tick. Bounded map keeps hot lookups free.
+const TOKEN_CACHE = new Map<string, Token[]>();
+const TOKEN_CACHE_MAX = 4096;
 
 export { colorFor };

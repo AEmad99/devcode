@@ -25,6 +25,8 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "login", description: "Log in to a provider (OAuth or API key)" },
   { name: "logout", description: "Log out of a provider" },
   { name: "reload", description: "Reload extensions" },
+  { name: "version", description: "Show installed DevCode version" },
+  { name: "update", description: "Check GitHub for a newer DevCode release" },
   { name: "exit", description: "Quit DevCode" },
 ];
 

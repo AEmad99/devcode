@@ -57,6 +57,8 @@ import { ThinkingStream } from "./components/ThinkingStream.js";
 import { layoutFromTerminal } from "./layout.js";
 import { SLASH_COMMANDS, parseSlash } from "./slash.js";
 import { initialState, reducer } from "./store.js";
+import { appVersion } from "./brand.js";
+import { formatUpdateInfo, getUpdateInfo } from "../core/update.js";
 import { resolveTheme, THEME_IDS, THEMES, type ThemeId } from "./theme.js";
 
 export function App({
@@ -115,7 +117,10 @@ export function App({
   const modelRef = useRef(modelName);
   modelRef.current = modelName;
   const [login, setLogin] = useState<{ providerId?: string } | null>(null);
-  const settings0 = loadSettings();
+  // Lazy init: load once. (Previously this was a bare call in the component
+  // body, which did a readFileSync + JSON.parse on every render — i.e. on
+  // every ~33ms stream tick during a completion.)
+  const [settings0] = useState(loadSettings);
   const [themeId, setThemeId] = useState<ThemeId>(() => resolveTheme(settings0.theme).id);
   const theme = useMemo(() => resolveTheme(themeId), [themeId]);
   const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>(() => settings0.thinking ?? "medium");
@@ -353,10 +358,12 @@ export function App({
     dispatch({ type: "run_start" });
     const events = new Emitter();
 
-    // Stream coalescing: burst-then-settle pattern.
-    //   First token of a burst dispatches via setImmediate so the user sees
-    //   the first character within a frame (no 50ms blank-then-flush lag).
-    //   Subsequent tokens within ~33ms accumulate into a single dispatch.
+    // Stream coalescing: leading-edge throttle.
+    //   The FIRST token of a burst flushes immediately so the user sees the
+    //   first character within a frame (no 33ms blank-then-flush lag). Tokens
+    //   arriving within the next ~33ms coalesce into the buffers and flush on
+    //   the trailing edge of that window. After the window goes idle, the next
+    //   token again flushes immediately.
     //   Tool/tool_start/tool_end/turn_end/error boundaries flush immediately
     //   so a transcript never gets stranded inside the buffer mid-tool.
     //
@@ -380,13 +387,21 @@ export function App({
       }
     };
     let streamTimer: ReturnType<typeof setTimeout> | null = null;
+    let pending = false; // activity arrived during the cooldown window
     const kickStream = (): void => {
-      if (streamTimer) return;
-      // Leading edge: flush on the next macrotask so the very first token
-      // lands within a frame rather than waiting ~33ms.
+      if (streamTimer) {
+        // Within a cooldown window: accumulate, flush on the trailing edge.
+        pending = true;
+        return;
+      }
+      // Leading edge: flush immediately so the first token lands at once.
+      flushStream();
       streamTimer = setTimeout(() => {
         streamTimer = null;
-        flushStream();
+        if (pending) {
+          pending = false;
+          flushStream(); // trailing edge: drain whatever coalesced in-window
+        }
       }, 33);
     };
     const flushStreamNow = (): void => {
@@ -394,6 +409,7 @@ export function App({
         clearTimeout(streamTimer);
         streamTimer = null;
       }
+      pending = false;
       flushStream();
     };
     events.on("text_delta", (e) => {
@@ -677,6 +693,18 @@ export function App({
             dispatch({ type: "info", text: res.message });
           });
           return;
+        case "version": {
+          dispatch({ type: "info", text: `DevCode v${appVersion()}` });
+          return;
+        }
+        case "update": {
+          dispatch({ type: "info", text: "Checking GitHub for updates…" });
+          void (async () => {
+            const info = await getUpdateInfo();
+            dispatch({ type: "info", text: formatUpdateInfo(info) });
+          })();
+          return;
+        }
         case "logout":
           if (!args) {
             dispatch({ type: "error", error: "Usage: /logout <provider>" });
@@ -892,6 +920,10 @@ export function App({
     () => state.entries.some((e) => e.kind === "tool" && e.status === "running"),
     [state.entries],
   );
+  // Cost depends only on model + cumulative usage; memoize so the per-render
+  // estimateCost call (a table lookup, but it ran on every stream tick) is
+  // skipped when neither changed.
+  const cost = useMemo(() => estimateCost(modelName, state.usage), [modelName, state.usage]);
 
   const { columns: termCols, rows: termRows, inputWidth, messageWindow, pickerWindow } = layout;
 
@@ -1087,7 +1119,7 @@ export function App({
           providerId={providerId}
           cwd={process.cwd()}
           usage={state.usage}
-          cost={estimateCost(modelName, state.usage)}
+          cost={cost}
           queued={state.queuedCount}
           bgRunning={state.bgRunning}
           running={state.running}

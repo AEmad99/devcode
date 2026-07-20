@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { Writable } from "node:stream";
 import {
-  enterFullScreen,
+  enterScreenMode,
   installScreenCleanupOnce,
-  leaveFullScreen,
+  leaveScreenMode,
 } from "../src/tui/screen-mode.js";
 
 /**
@@ -11,15 +11,19 @@ import {
  * short-circuit and never write anything. We override that with a fake TTY
  * stream injected via mock and capture what gets written.
  *
- * The tests assert byte-for-byte against the documented alt-screen recipe so
- * future changes that "tweak the escape" can only land by also updating the
- * test (and by extension the spec comment at the top of screen-mode.ts).
+ * The tests assert byte-for-byte against the documented recipe so future
+ * changes that "tweak the escape" can only land by also updating the test
+ * (and by extension the spec comment at the top of screen-mode.ts).
+ *
+ * Note: we deliberately do NOT use the alternate screen buffer. The <Static>
+ * transcript must land in the terminal's primary scrollback so the user can
+ * scroll back up through the whole session — the alt screen would discard it.
  */
 
 // Canonical sequences from the doc-comment at the top of screen-mode.ts.
 // Keep these in sync if you ever change the recipe — they encode the contract.
-const SEQ_ENTER = "\x1b[?1049h\x1b[?25l\x1b[?7l\x1b[2J\x1b[H";
-const SEQ_LEAVE = "\x1b[?1049l\x1b[?25h\x1b[?7h";
+const SEQ_ENTER = "\x1b[?25l\x1b[?7l\x1b[2J\x1b[H";
+const SEQ_LEAVE = "\x1b[?25h\x1b[?7h";
 
 class FakeStdout extends Writable {
   buf = "";
@@ -37,7 +41,7 @@ let originalIsTTY: boolean | undefined;
 
 beforeEach(() => {
   fakeOut = new FakeStdout();
-  // process.stdout.isTTY drives the short-circuit inside enterFullScreen/leaveFullScreen.
+  // process.stdout.isTTY drives the short-circuit inside enterScreenMode/leaveScreenMode.
   originalIsTTY = (process.stdout as unknown as { isTTY?: boolean }).isTTY;
   (process.stdout as unknown as { isTTY?: boolean }).isTTY = true;
   // Spy on stdout.write so we can see what the helpers actually emitted.
@@ -58,30 +62,54 @@ afterEach(() => {
   mock.restore();
 });
 
-describe("enterFullScreen", () => {
-  test("writes the alt-screen + hide cursor + clear+home sequence when stdout is a TTY", () => {
-    enterFullScreen();
+describe("enterScreenMode", () => {
+  test("writes the hide-cursor + disable-wrap + clear+home sequence when stdout is a TTY", () => {
+    enterScreenMode();
     expect(fakeOut.buf).toBe(SEQ_ENTER);
+  });
+
+  test("does not switch to the alternate screen buffer (keeps scrollback)", () => {
+    enterScreenMode();
+    // The alt-screen ON sequence must never be emitted — it would discard the
+    // <Static> transcript from the terminal's native scrollback.
+    expect(fakeOut.buf).not.toContain("\x1b[?1049h");
   });
 
   test("writes nothing when stdout is not a TTY (piped, redirected, CI)", () => {
     (process.stdout as unknown as { isTTY?: boolean }).isTTY = false;
-    enterFullScreen();
+    enterScreenMode();
     expect(fakeOut.buf).toBe("");
   });
 });
 
-describe("leaveFullScreen", () => {
-  test("writes the inverse sequence (restore alt-screen, show cursor, re-enable wrap)", () => {
-    enterFullScreen();
+describe("leaveScreenMode", () => {
+  test("writes the inverse sequence (show cursor, re-enable wrap) but does not clear", () => {
+    enterScreenMode();
     fakeOut.buf = "";
-    leaveFullScreen();
+    leaveScreenMode();
     expect(fakeOut.buf).toBe(SEQ_LEAVE);
+  });
+
+  test("does not switch out of the alternate screen buffer", () => {
+    enterScreenMode();
+    fakeOut.buf = "";
+    leaveScreenMode();
+    // We never entered the alt screen, so we must not emit the alt-screen OFF
+    // sequence either — emitting it would still be harmless, but its presence
+    // would imply we entered it somewhere.
+    expect(fakeOut.buf).not.toContain("\x1b[?1049l");
+  });
+
+  test("does not clear the screen on leave (transcript stays in scrollback)", () => {
+    enterScreenMode();
+    fakeOut.buf = "";
+    leaveScreenMode();
+    expect(fakeOut.buf).not.toContain("\x1b[2J");
   });
 
   test("writes nothing when stdout is not a TTY", () => {
     (process.stdout as unknown as { isTTY?: boolean }).isTTY = false;
-    leaveFullScreen();
+    leaveScreenMode();
     expect(fakeOut.buf).toBe("");
   });
 });
@@ -89,7 +117,7 @@ describe("leaveFullScreen", () => {
 describe("installScreenCleanupOnce", () => {
   test("hooks exit, SIGINT, SIGTERM so any of them restores the terminal", () => {
     installScreenCleanupOnce();
-    // After install, each event must trigger leaveFullScreen (i.e. SEQ_LEAVE on stdout).
+    // After install, each event must trigger leaveScreenMode (i.e. SEQ_LEAVE on stdout).
     expect(process.listenerCount("exit")).toBeGreaterThanOrEqual(1);
     expect(process.listenerCount("SIGINT")).toBeGreaterThanOrEqual(1);
     expect(process.listenerCount("SIGTERM")).toBeGreaterThanOrEqual(1);

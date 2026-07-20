@@ -1,4 +1,4 @@
-import React, { memo } from "react";
+import React, { memo, useMemo } from "react";
 import { Text } from "ink";
 import { homedir } from "node:os";
 import { formatContextUsage, getLimits } from "../../core/limits.js";
@@ -7,6 +7,8 @@ import type { Theme } from "../theme.js";
 
 const fmt = (n: number): string => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
 const DOT = "  ·  ";
+// homedir() is a sync syscall; compute once at module load instead of every render.
+const HOME = homedir().replace(/\\/g, "/");
 
 /**
  * Render one colored segment of the status bar. Passing the whole status bar
@@ -52,13 +54,16 @@ export const StatusLine = memo(function StatusLine({
   /** Terminal columns — truncate status bar to fit on resize. */
   width?: number;
 }) {
-  const home = homedir().replace(/\\/g, "/");
-  const normCwd = cwd.replace(/\\/g, "/");
-  let shortCwd = home && normCwd.startsWith(home) ? `~${normCwd.slice(home.length)}` : normCwd;
+  const home = HOME;
+  const normCwd = useMemo(() => cwd.replace(/\\/g, "/"), [cwd]);
   const pid = providerId && providerId !== "fake" ? providerId : undefined;
-  const lim = getLimits(pid ?? "unknown", model);
+  const lim = useMemo(() => getLimits(pid ?? "unknown", model), [pid, model]);
+  let shortCwd = useMemo(
+    () => (home && normCwd.startsWith(home) ? `~${normCwd.slice(home.length)}` : normCwd),
+    [home, normCwd],
+  );
   const used = contextUsed ?? usage.input + usage.cacheRead + usage.output;
-  const ctx = formatContextUsage(used, lim.contextWindow);
+  const ctx = useMemo(() => formatContextUsage(used, lim.contextWindow), [used, lim.contextWindow]);
 
   // Narrow terminals: shorten cwd first so cost/ctx stay visible.
   if (width && width < 100 && shortCwd.length > 28) {
